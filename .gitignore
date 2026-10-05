@@ -1,0 +1,7 @@
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+tests/web/node_modules/
+tests/web/.cache/

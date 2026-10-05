@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- After Scene.load() returns, its vertex and index data must be on the GPU: loading frees the
+     source buffers, and a later upload would read freed memory. This page counts buffer
+     uploads with data during the first render after a load. -->
+<html><body><canvas width="16" height="16"></canvas>
+<script type="module">
+import { createRenderer } from "./filly/filly.js";
+const gl = document.querySelector("canvas").getContext("webgl2");
+const renderer = await createRenderer(gl);
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 64, 64);
+const target = renderer.importTexture(texture, 64, 64);
+const scene = renderer.createScene();
+const model = await scene.loadUrl("cube.glb");
+const camera = scene.createCamera();
+camera.setPerspective({ fovY: 30, near: 0.1, far: 100 });
+camera.frame(model, { aspect: 1 });
+scene.camera = camera;
+const uploads = [];
+for (const name of ["bufferData", "bufferSubData"])
+{
+	const original = gl[name].bind(gl);
+	gl[name] = (target, ...args) =>
+	{
+		// Vertex (ARRAY_BUFFER) and index (ELEMENT_ARRAY_BUFFER) data; uniforms change per frame.
+		if ((target === gl.ARRAY_BUFFER || target === gl.ELEMENT_ARRAY_BUFFER) && typeof args[0] === "object")
+		{
+			uploads.push(name);
+		}
+		return original(target, ...args);
+	};
+}
+renderer.render(scene, target);
+window.testResult = { uploads };
+</script></body></html>
