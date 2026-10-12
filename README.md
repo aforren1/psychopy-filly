@@ -1,7 +1,7 @@
 # psychopy-filly
 
 A PsychoPy plugin that adds the **3D Scene** and **3D Model** components to Builder. They show
-glTF models that [filly](../filly) renders. They work in local experiments (PsychoPy) and in
+glTF models that [filly](https://github.com/aforren1/filly) renders. They work in local experiments (PsychoPy) and in
 online experiments (PsychoJS):
 
 - Locally, filly renders into an OpenGL texture that the PsychoPy window shares. PsychoPy draws
@@ -20,10 +20,12 @@ were not run on Pavlovia.
 Local experiments:
 
 - Windows or Linux. filly does not support macOS.
-- PsychoPy with the pyglet window backend and the "average" blend mode. Tested with
-  psychopy-lib 2026.2.4. The component also loads and compiles in the PsychoPy 2026.1.2 app,
-  but filly has no wheel for that app's Python 3.10 yet.
-- filly, installed in the Python environment that runs the experiment.
+- PsychoPy 2024.2 or later, with the pyglet window backend and the "average" blend mode.
+  Tested with PsychoPy 2024.2.4 (Python 3.10) and 2026.2.4 (Python 3.11). Earlier standalone
+  installs ship Python 3.8 or earlier, and filly needs Python 3.10 or later. The component
+  also loads and compiles in the PsychoPy 2026.1.2 app.
+- filly 0.2 or later, installed in the Python environment that runs the experiment. filly 0.2
+  is not released: install it from source.
 
 Online experiments:
 
@@ -37,8 +39,11 @@ Online experiments:
 uv pip install --python <env>\Scripts\python.exe -e . --no-deps
 ```
 
-PsychoPy is not a declared dependency: it ships as two distributions, `psychopy` and
-`psychopy-lib`, and a requirement on one makes pip install it next to the other.
+The package requires `psychopy>=2024.2`. The standalone app registers the `psychopy`
+distribution, so installing the plugin there adds nothing else. An environment with only
+`psychopy-lib` gets `psychopy` installed next to it; use `--no-deps` there.
+`psychopy_filly.runtime.TESTED_PSYCHOPY` lists the tested versions; other versions log a
+warning.
 
 ## Use the components
 
@@ -114,24 +119,22 @@ and its update mode to **set every repeat**.
 
 #### Model cache
 
-Each window keeps a hidden copy of each file that a change loaded. All 3D Scenes of the window
+Each window keeps a copy of each file that a change loaded. All 3D Scenes of the window
 share these copies. A file that a scene shows again, as in conditions that alternate models, is
-then a clone of its copy: no new load and no texture upload. On the test laptop, a change
+then a new model of its copy: no new load and no texture upload. On the test laptop, a change
 between two cached models (7.4 MB and 2.2 MB) took a median of 5 to 7 ms instead of 84 to
-119 ms. Clones have their own material settings, so a base color or variant stays with its
-model. A scene with **Refraction** on loads glass materials differently, so it does not share
-copies with a scene that has it off.
+119 ms. Each model has its own material settings, so a base color or variant stays with it.
 
 A cached copy stays in memory while no model shows it: the file's source data, and its decoded
 textures and geometry in GPU memory. The cache counts filly's estimate of this memory
-(`Model.memory`: CPU bytes plus GPU bytes). On the test laptop, the estimate was 79 MiB for the
+(`Asset.memory`: CPU bytes plus GPU bytes). On the test laptop, the estimate was 79 MiB for the
 7.4 MB file with large textures and 18 MiB for the 2.2 MB file. On a computer with an
 integrated GPU, both parts use system memory.
 
 The cache keeps its copies within one memory limit. When a new copy goes past the limit, the
-least recently used copies go first. A model whose estimate is above the limit is not cached,
-and it loads without the source data. Models that the experiment shows do not count, also when
-they are clones.
+least recently used copies go first. A file whose estimate is above the limit is not cached, and
+its model keeps no source data. Models that the experiment shows do not count, also when
+they come from a cached copy.
 
 Set the limit in one of these ways:
 
@@ -189,8 +192,7 @@ image, as for an image stimulus; they need no new render.
 | Appearance | Background color | transparent | every frame | An opaque color, or **Show environment**, also saves the extra pass that transparent output costs |
 | Rendering | Tone mapping | linear | constant | `aces_legacy` matches Filament's gltf_viewer |
 | Rendering | Antialiasing, MSAA samples | fxaa, 1 | constant | |
-| Rendering | Shadows, Refraction | off | constant | |
-| Rendering | Precompiled shaders | off | constant | Local only; the first scene in a window sets it; the web build always uses precompiled materials |
+| Rendering | Shadows | off | constant | Glass refracts without a setting |
 | Rendering | Model cache (MiB) | default | constant | Memory limit of the window's [model cache](#model-cache): a number, `0` for off, or `unlimited` |
 
 ### 3D Model
@@ -231,8 +233,6 @@ scene = filly_runtime.SceneStim(
     pos=(0, 0), size=(0.6, 0.6), units=win.units, ori=0.0, opacity=None,
     colorSpace='rgb',
     depth=0.0)
-if filly_runtime.close_all not in runAtExit:
-    runAtExit.append(filly_runtime.close_all)
 cube = filly_runtime.SceneModel(
     scene, 'cube.glb', name='cube', colorSpace='rgb',
     rotation=None,
@@ -288,7 +288,7 @@ filly's WebAssembly module is filly's own C++ core, compiled with Emscripten. It
 precompiled materials and output passes, so online output follows the same material path as
 local output. PsychoJS's renderer (PIXI) and filly share one WebGL2 context: filly renders into
 a texture that PIXI allocated, and PIXI draws it as a sprite. The runtime hands the context back
-to PIXI before each PIXI frame. See filly's [web explanation](../filly/docs/explanation/web.md).
+to PIXI before each PIXI frame. See filly's [web explanation](https://github.com/aforren1/filly/blob/main/docs/explanation/web.md).
 
 Measured on one laptop (Intel Iris Xe, Windows 11, 60 Hz) with a rotating cube, two runs per
 browser, with the earlier one-component runtime. Creating a scene and its model now does the
@@ -313,7 +313,7 @@ without blocking the page, until the GPU has finished, so that no compilation or
 falls on a trial frame. `setModel()` does the same. You can thus also create a scene or a model during a
 routine, but frames during creation can still be long (see the table). Before these changes, the page showed no new frame for about 0.5 s per stimulus.
 A uniform environment is not filtered; see filly's
-[environment lighting](../filly/docs/reference/api.md#environment-lighting).
+[environment lighting](https://github.com/aforren1/filly/blob/main/docs/reference/api.md#environment-lighting).
 
 ### Difference from local output
 
@@ -348,21 +348,36 @@ The test helper `compile_js()` in `tests/builder_helpers.py` avoids both.
 
 ## Test
 
+Make one environment for each tested PsychoPy version. PsychoPy 2024.2.4 must have Python
+3.10. Its `psychopy` distribution requires `pypi-search`, which PyPI no longer has;
+`tests/psychopy-overrides.txt` removes that requirement. filly 0.2 is not on PyPI yet, so the
+command installs it from a filly checkout next to this one (`..\filly`); this builds filly.
+
 ```powershell
-uv pip install --python <env>\Scripts\python.exe esprima pytest
+uv venv --python 3.10 <env>
+uv pip install --python <env>\Scripts\python.exe --override tests\psychopy-overrides.txt psychopy==2024.2.4 ..\filly -e .[tests]
+```
+
+For PsychoPy 2026.2.4, use Python 3.11 and `psychopy==2026.2.4`. Then:
+
+```powershell
 <env>\Scripts\python.exe -m pytest -m "not display and not browser"   # code generation
 <env>\Scripts\python.exe -m pytest -m display                         # opens windows, needs filly
 cd tests\web; npm install; cd ..\..
 <env>\Scripts\python.exe -m pytest -m browser                         # runs experiments in browsers
 ```
 
-psychopy-lib 2026.2.4 needs `esprima` to compile experiments but does not declare it. The
-browser tests need Node.js and an installed browser. They use Chrome by default; set
+The browser tests need Node.js and an installed browser. They use Chrome by default; set
 `FILLY_TEST_BROWSERS=chrome,edge,firefox` for more. On their first run they download the PsychoJS
-library from lib.pavlovia.org into `tests/web/.cache`.
+library of the installed PsychoPy version from lib.pavlovia.org into `tests/web/.cache`.
 
-`tests/data/filly_cube.py` is the expected script for PsychoPy 2026.2.4. After an intended
-change to the generated code, write it again:
+On Windows, the tests point `APPDATA` to an empty folder. PsychoPy adds the app's plugin
+folder (`%APPDATA%\psychopy3\packages`) to `sys.path`, and copies of filly or
+psychopy-filly installed there by the app would replace the code under test.
+
+`tests/data/filly_cube.py` is the expected script for PsychoPy 2026.2.4; the test that
+compares it skips other versions. After an intended change to the generated code, write it
+again with PsychoPy 2026.2.4:
 
 ```powershell
 <env>\Scripts\python.exe -c "import sys; sys.path.insert(0, 'tests'); import builder_helpers as h; open('tests/data/filly_cube.py', 'w', encoding='utf-8', newline='\n').write(h.compile_script(h.build_experiment()))"
@@ -378,7 +393,7 @@ standalone app's Python. `tools/make_icons.py` writes the placeholder icons.
 
 1. In filly, build the Filament WebAssembly SDK once, then filly's module (on Linux or WSL):
    `tools/build_filament_web.sh`, then `tools/build_filly_web.sh`. See filly's
-   [build guide](../filly/docs/how-to/build.md#build-for-the-web).
+   [build guide](https://github.com/aforren1/filly/blob/main/docs/how-to/build.md#build-for-the-web).
 2. Here: `python tools/vendor_web.py ../filly/build/web`. It copies the files and writes their
    sizes and SHA-256 hashes to `psychopy_filly/web/VENDOR.json`.
 
@@ -400,9 +415,10 @@ Set up once: on pypi.org and test.pypi.org, add a pending publisher for project
 environments `pypi` and `testpypi`. Create the same environments in the GitHub repository
 settings.
 
-Publish filly first: the tests install it from PyPI. For a final release, require a final
-filly, for example `filly>=0.1.0,<0.2` in `pyproject.toml`. Then set `version`, commit, and push
-a tag such as `v0.1.0`.
+Publish filly 0.2 first: the tests install it from PyPI, and PyPI has only filly 0.1.0, which
+cannot run this plugin. For a final release, require a final filly, for example
+`filly>=0.2.0,<0.3` in `pyproject.toml`. Then set `version`, commit, and push a tag such as
+`v0.1.0`.
 
 ## License
 

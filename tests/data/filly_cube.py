@@ -377,9 +377,6 @@ def run(expInfo, thisExp, win, globalClock=None, thisSession=None):
         pos=(0, 0), size=(0.6, 0.6), units=win.units, ori=0.0, opacity=None,
         colorSpace='rgb',
         depth=0.0)
-    # Release filly objects before quit() closes the window, also after Escape.
-    if filly_runtime.close_all not in runAtExit:
-        runAtExit.append(filly_runtime.close_all)
     cube = filly_runtime.SceneModel(
         scene, 'cube.glb', name='cube', colorSpace='rgb',
         rotation=None,

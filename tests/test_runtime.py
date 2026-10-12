@@ -204,13 +204,14 @@ def test_matches_direct_filly_render(window, cube_path):
         center = np.asarray(model.bounds).mean(axis=0)
         model.position = tuple(np.array([0.1, -0.05, 0])
                                - np.asarray(model.transform)[:3, :3] @ center)
-        camera = direct_scene.create_camera()
-        camera.set_perspective(fov_y=35, near=0.5, far=10)
+        camera = renderer.create_camera()
+        camera.set_perspective(fov_y_deg=35, near=0.5, far=10)
         camera.position = (0.5, 1.0, 3.0)
         camera.look_at((0, 0, 0))
         direct_scene.camera = camera
         direct_scene.add_directional_light(direction=(-1, -2, -1), intensity=80000)
-        direct_scene.set_environment(np.ones((8, 16, 3), np.float32), intensity=15000)
+        direct_scene.environment = renderer.create_environment(np.ones((8, 16, 3), np.float32))
+        direct_scene.environment_intensity = 15000
         # PsychoPy rgb (-0.6, -0.4, 0.2) is the display value (0.2, 0.3, 0.6); filly takes linear.
         display = np.array([0.2, 0.3, 0.6])
         linear = np.where(display <= 0.04045, display / 12.92, ((display + 0.055) / 1.055) ** 2.4)
@@ -484,7 +485,8 @@ def test_model_starts_without_file(window, cube_path):
 
 
 def test_model_cache_alternation(window, cube_path, monkeypatch):
-    """A/B/A/B models across routines: each file loads once, and a clone shows the pixels of a load."""
+    """A/B/A/B models across routines: each file loads once, and a model of a kept asset shows the
+    pixels of a load."""
     import filly
     from psychopy_filly import runtime
 
@@ -512,15 +514,17 @@ def test_model_cache_alternation(window, cube_path, monkeypatch):
         shown.setModel(path)
         np.testing.assert_array_equal(_show(window, scene), references[path])
     assert cache.loads == 4 and len(cache._entries) == 2
-    # The prototypes stay in the cache's hidden scene: the shown model and two prototypes.
+    # The assets belong to the renderer and are not models: only the shown model is live.
     renderer = scene._host.renderer
-    assert renderer.stats.live_models == 3
+    assert renderer.stats.live_models == 1
+    assets = list(cache._entries.values())
     runtime.close_all()
-    assert renderer.closed and not cache._entries and cache._scene is None
+    # The renderer's close releases the assets.
+    assert renderer.closed and all(asset.closed for asset in assets)
 
 
 def test_model_cache_outlives_scenes(window, cube_path):
-    """The window's scenes share the cache, and a closed scene leaves its prototypes usable."""
+    """The window's scenes share the cache, and a closed scene leaves its assets usable."""
     from psychopy_filly import runtime
 
     first = runtime.SceneStim(window, size=(200, 200))
@@ -533,19 +537,43 @@ def test_model_cache_outlives_scenes(window, cube_path):
     shown.setAutoDraw(True)
     assert cache.loads == 1
     assert _model_mask(_show(window, second)).mean() > 0.05
-    # A scene with refraction loads its materials differently, so it has its own entry.
-    glass = runtime.SceneStim(window, size=(64, 64), refraction=True)
-    runtime.SceneModel(glass, None).setModel(cube_path)
-    assert cache.loads == 2 and len(cache._entries) == 2
+    # Every scene adds the same asset, whatever its rendering settings.
+    other = runtime.SceneStim(window, size=(64, 64), antialiasing="none", msaa=4)
+    runtime.SceneModel(other, None).setModel(cube_path)
+    assert cache.loads == 1 and len(cache._entries) == 1
 
 
-def test_model_cache_limits_and_clones(window, cube_path, tmp_path, monkeypatch):
+def test_scenes_share_environments(window, tmp_path):
+    """A window's scenes share one filtered Environment per file, and the uniform one."""
+    from PIL import Image
+    from psychopy_filly import runtime
+
+    first = runtime.SceneStim(window, size=(64, 64), envIntensity=10000)
+    second = runtime.SceneStim(window, size=(64, 64), envRotation=90)
+    none = runtime.SceneStim(window, size=(64, 64), environment="none")
+    assert first._scene.environment == second._scene.environment
+    assert none._scene.environment is None
+    # Intensity and rotation stay per scene.
+    first.draw()
+    second.draw()
+    assert (first._scene.environment_intensity, second._scene.environment_intensity) == (10000, 20000)
+    assert second._scene.environment_rotation_deg == 90
+    panorama = tmp_path / "sky.png"
+    Image.fromarray(np.full((8, 16, 3), 128, np.uint8)).save(panorama)
+    files = [runtime.SceneStim(window, size=(64, 64), environment="file", envFile=str(panorama))
+             for _ in range(2)]
+    assert files[0]._scene.environment == files[1]._scene.environment != first._scene.environment
+    first.close()
+    assert not second._scene.environment.closed
+
+
+def test_model_cache_limits_and_models(window, cube_path, tmp_path, monkeypatch):
     import filly
     from psychopy_filly import runtime
 
     scene = runtime.SceneStim(window, size=(200, 200), camPos=(0, 0, 6), environment="none")
     cache = scene._host.model_cache
-    # Clones of one prototype keep their own settings.
+    # Models of one asset keep their own settings.
     left = runtime.SceneModel(scene, None, modelPos=(-1, 0, 0), baseColor=(1, -1, -1))
     right = runtime.SceneModel(scene, None, modelPos=(1, 0, 0), baseColor=(-1, -1, 1))
     for model in (left, right):
@@ -555,7 +583,7 @@ def test_model_cache_limits_and_clones(window, cube_path, tmp_path, monkeypatch)
     _show(window, scene)
     assert tuple(left.model.material("painted").base_color) == (1, 0, 0, 1)
     assert tuple(right.model.material("painted").base_color) == (0, 0, 1, 1)
-    # The limit counts filly's estimate of the prototypes' memory; the least recently used go.
+    # The limit counts filly's estimate of the assets' memory; the least recently used go.
     cube_bytes = cache.size()
     assert cube_bytes > 0
     suzanne = filly.samples.SUZANNE
@@ -568,8 +596,9 @@ def test_model_cache_limits_and_clones(window, cube_path, tmp_path, monkeypatch)
     keys = [key[0] for key in cache._entries]
     assert cache.loads == 3 and str(Path(cube_path).resolve()) not in keys and keys[-1] == str(copy.resolve())
     assert cache.size() <= both - 1
-    # A model above the limit loads without source data and is not cached. This limit is above
-    # the file size, so the first load measures the model.
+    # An asset above the limit shows its model, releases its source data, and is not cached. This
+    # limit is above
+    # the file size, so the first load measures the asset.
     monkeypatch.setattr(runtime, "MODEL_CACHE_MAX_BYTES", Path(cube_path).stat().st_size + 1)
     assert cube_bytes > 2 * runtime.MODEL_CACHE_MAX_BYTES
     left.setModel(cube_path)

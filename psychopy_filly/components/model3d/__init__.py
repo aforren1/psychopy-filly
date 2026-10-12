@@ -83,8 +83,9 @@ class Model3DComponent(BaseComponent):
     tooltip = _translate("3D Model: show a glTF model in a 3D Scene")
     # Builder's Help button opens this page.
     url = URL
-    # Earliest PsychoPy in which this component was checked to load and compile.
-    version = "2026.1.2"
+    # Earliest supported PsychoPy. For an experiment whose "Use version" is earlier, Builder saves
+    # a legacy copy without this component.
+    version = "2024.2.0"
     beta = True
 
     # Start and stop show and hide the model: the same code as for visual components, with the

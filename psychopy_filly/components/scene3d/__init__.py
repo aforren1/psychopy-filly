@@ -78,11 +78,6 @@ SCENE_PARAMS = [
      "Multisample antialiasing"),
     ("shadows", False, "bool", "bool", "Rendering", [], None, "Shadows",
      "Shadows from the directional light"),
-    ("refraction", False, "bool", "bool", "Rendering", [], None, "Refraction",
-     "Screen-space refraction for glass materials"),
-    ("precompiledShaders", False, "bool", "bool", "Rendering", [], None, "Precompiled shaders",
-     "Use Filament's precompiled materials where they match. The first 3D Scene in a window "
-     "sets this"),
     # Text, not a number, so that "unlimited" compiles to a string in both targets.
     ("modelCacheMiB", "", "str", "single", "Rendering", [], None, "Model cache (MiB)",
      "Memory limit of the window's cache of model files that changed per trial. Blank: the "
@@ -104,8 +99,9 @@ class Scene3DComponent(BaseVisualComponent):
     tooltip = _translate("3D Scene: the camera, lights, and image of 3D models rendered with filly")
     # Builder's Help button opens this page.
     url = URL
-    # Earliest PsychoPy in which this component was checked to load and compile.
-    version = "2026.1.2"
+    # Earliest supported PsychoPy. For an experiment whose "Use version" is earlier, Builder saves
+    # a legacy copy without this component.
+    version = "2024.2.0"
     beta = True
 
     def __init__(self, exp, parentName, name="scene",
@@ -143,9 +139,6 @@ class Scene3DComponent(BaseVisualComponent):
             "    colorSpace={colorSpace},\n"
             "{arguments}"
             "    depth={depth:.1f})\n"
-            "# Release filly objects before quit() closes the window, also after Escape.\n"
-            "if filly_runtime.close_all not in runAtExit:\n"
-            "    runAtExit.append(filly_runtime.close_all)\n"
         ).format(name=inits["name"], pos=inits["pos"], size=inits["size"], units=inits["units"],
                  ori=inits["ori"], opacity=inits["opacity"], colorSpace=inits["colorSpace"],
                  arguments=self._arguments(inits, True), depth=-self.getPosInRoutine())

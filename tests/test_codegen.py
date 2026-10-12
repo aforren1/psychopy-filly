@@ -31,7 +31,7 @@ NON_DEFAULTS = {
     "envVisible": True, "backgroundColor": "$[0, 0, 0]", "variant": "red",
     "material": "painted", "baseColor": "blue", "animation": "spin", "animTime": 1.5,
     "animLoop": False, "toneMapping": "aces_legacy", "antialiasing": "none", "msaa": 4,
-    "shadows": True, "refraction": True, "precompiledShaders": True, "modelCacheMiB": "512",
+    "shadows": True, "modelCacheMiB": "512",
 }
 
 
@@ -70,12 +70,14 @@ def test_entry_points_register_components_without_filly():
         "before = 'Model3DComponent' in experiment.getAllComponents()\n"
         "plugins.activatePlugins()\n"
         "comps = experiment.getAllComponents()\n"
-        "print(json.dumps([before, 'Scene3DComponent' in comps, 'Model3DComponent' in comps,\n"
+        "print('RESULT', json.dumps([before, 'Scene3DComponent' in comps, 'Model3DComponent' in comps,\n"
         "                  'psychopy-filly' in plugins.listPlugins('loaded'),\n"
         "                  'filly' in sys.modules]))\n"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    assert json.loads(out.stdout.strip().splitlines()[-1]) == [False, True, True, True, False]
+    # PsychoPy's console log shares stdout and can follow the result.
+    line = next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))
+    assert json.loads(line[len("RESULT "):]) == [False, True, True, True, False]
 
 
 def test_compiled_script_matches_fixture():
@@ -104,7 +106,8 @@ def test_generated_code():
         "        rotation=None,\n"
         "    )\n"
     ) in script
-    assert "runAtExit.append(filly_runtime.close_all)" in script
+    # Escape skips the end code; the runtime closes filly in win.close() instead.
+    assert "runAtExit.append(filly" not in script
     assert "cube.setRotation((20, 90*t, 0), log=False)\n" in script
     # Both start: the scene draws, and the model shows in it.
     assert "scene.setAutoDraw(True)\n" in script and "cube.setAutoDraw(True)\n" in script
@@ -136,7 +139,7 @@ def test_non_default_constants_are_arguments():
         "viewHeight": "2.5", "camPos": "(0, 1, 4)", "fill": "0.5", "exposure": "12.0",
         "light": "False", "lightColor": "'red'", "environment": "'file'",
         "envFile": "'studio.hdr'", "backgroundColor": "[0, 0, 0]",
-        "toneMapping": "'aces_legacy'", "msaa": "4", "shadows": "True", "precompiledShaders": "True",
+        "toneMapping": "'aces_legacy'", "msaa": "4", "shadows": "True",
         "modelCacheMiB": "'512'",
     }
     expected_model = {
@@ -293,6 +296,8 @@ def test_studio_profiles():
     from psychopy.plugins import activatePlugins
     activatePlugins()
     components = getAllComponents()
+    if not hasattr(components["Scene3DComponent"], "getTemplateJSON"):
+        pytest.skip("This PsychoPy predates Studio component profiles")
     for name, icon, specs, base in (
             ("Scene3DComponent", "scene3d.png", _scene_params(),
              {"pos", "size", "units", "ori", "opacity", "startVal", "stopVal", "colorSpace"}),

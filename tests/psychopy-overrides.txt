@@ -1,0 +1,6 @@
+# uv overrides for test environments with the full "psychopy" distribution:
+#   uv pip install --override tests/psychopy-overrides.txt psychopy==2024.2.4 ...
+# PsychoPy 2023.2 to 2024.2 require pypi-search, which is no longer on PyPI.
+pypi-search; sys_platform == "never"
+# PyPI has no Linux wheels of wxPython, which PsychoPy 2024.2 requires. The tests do not use it.
+wxpython; sys_platform != "linux"

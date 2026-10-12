@@ -52,6 +52,7 @@ class Host
 		this.stims = new Set();
 		this.transparentReady = false;  // whether a transparent scene has rendered
 		this.modelCache = new ModelCache(renderer);
+		this.environments = new Map();  // "uniform" or a file URL -> promise of a filly Environment
 		this.handBack = () => this.renderer.handBack();
 		// PsychoJS bundles PIXI without exporting it; reach its classes through the window.
 		const sprite = win._backgroundSprite;
@@ -60,20 +61,60 @@ class Host
 		this.BaseTexture = sprite.texture.baseTexture.constructor;
 	}
 
+	/**
+	 * The window's Environment of the panorama or KTX file at `url`, or with null the uniform one.
+	 * Scenes share it, so a file is fetched and filtered once per window, not once per scene.
+	 */
+	environment(url = null, ktx = false)
+	{
+		const key = url === null ? "uniform" : new URL(url, document.baseURI).href;
+		let environment = this.environments.get(key);
+		if (!environment)
+		{
+			environment = (async () =>
+			{
+				if (url === null)
+				{
+					return this.renderer.createEnvironment(new Float32Array(8 * 16 * 3).fill(1), 16, 8);
+				}
+				const bytes = await fetchBytes(key);
+				return ktx ? this.renderer.loadEnvironmentKtx(bytes) : this.renderer.loadEnvironment(bytes);
+			})();
+			this.environments.set(key, environment);
+			// A failed load is not kept, so that a later scene tries again.
+			environment.catch(() =>
+			{
+				if (this.environments.get(key) === environment)
+				{
+					this.environments.delete(key);
+				}
+			});
+		}
+		return environment;
+	}
+
 	close()
 	{
-		for (const stim of [...this.stims])
-		{
-			stim.close();
-		}
 		this.pixi.off("prerender", this.handBack);
+		// The stimuli close their objects while the renderer is open. The renderer's close then
+		// releases the rest, such as the environments, and also the targets of stimuli whose
+		// close failed.
 		try
 		{
+			for (const stim of [...this.stims])
+			{
+				stim.close();
+			}
 			this.modelCache.close();
 		}
 		finally
 		{
 			this.renderer.close();
+			for (const environment of this.environments.values())
+			{
+				environment.then((handle) => handle.dispose(), () => {});
+			}
+			this.environments.clear();
 		}
 	}
 }
@@ -456,39 +497,47 @@ function defineSceneStim(visual, util)
 
 			const { renderer } = this._host;
 			const scene = this._scene = renderer.createScene();
-			scene.refraction = this._refraction = Boolean(o.refraction);  // before loading: glass needs it at load
-			scene.toneMapping = o.toneMapping || "linear";
-			scene.antialiasing = o.antialiasing || "fxaa";
-			scene.msaa = Number(o.msaa || 1);
-			scene.shadows = Boolean(o.shadows);
-			this.camera = scene.createCamera();
-			scene.camera = this.camera;
+			// Renderer cameras outlive their scene, so the stimulus closes its own.
+			this.camera = renderer.createCamera();
 			this.light = null;
-			if (o.light ?? true)
+			try
 			{
-				this.light = scene.addDirectionalLight({ direction: DEFAULTS.lightDir });
-				this.light.castsShadows = Boolean(o.shadows);
-			}
-			if (environment === "uniform")
-			{
-				scene.setEnvironment(new Float32Array(8 * 16 * 3).fill(1), 16, 8);
-			}
-			else if (environment === "file")
-			{
-				const bytes = await fetchBytes(resourceUrl(this.win, o.envFile));
-				if (String(o.envFile).toLowerCase().endsWith(".ktx"))
+				scene.toneMapping = o.toneMapping || "linear";
+				scene.antialiasing = o.antialiasing || "fxaa";
+				scene.msaa = Number(o.msaa || 1);
+				scene.shadows = Boolean(o.shadows);
+				scene.camera = this.camera;
+				if (o.light ?? true)
 				{
-					scene.loadEnvironmentKtx(bytes);
+					this.light = scene.addDirectionalLight({ direction: DEFAULTS.lightDir });
+					this.light.castsShadows = Boolean(o.shadows);
 				}
-				else
+				if (environment !== "none")
 				{
-					scene.loadEnvironment(bytes);
+					scene.environment = await (environment === "uniform" ? this._host.environment()
+						: this._host.environment(resourceUrl(this.win, o.envFile), String(o.envFile).toLowerCase().endsWith(".ktx")));
 				}
+				scene.environmentVisible = Boolean(o.envVisible);
+				// The visible environment is opaque and covers the background.
+				this._opaqueEnvironment = environment !== "none" && Boolean(o.envVisible);
 			}
-			this._hasEnvironment = environment !== "none";
-			scene.environmentVisible = Boolean(o.envVisible);
-			// The visible environment is opaque and covers the background.
-			this._opaqueEnvironment = this._hasEnvironment && Boolean(o.envVisible);
+			catch (error)
+			{
+				// close() does nothing before the stimulus is open.
+				try
+				{
+					scene.close();
+					this.camera.close();
+				}
+				finally
+				{
+					for (const handle of [scene, this.camera, this.light])
+					{
+						handle?.dispose();
+					}
+				}
+				throw error;
+			}
 			await nextFrame();
 
 			this._host.stims.add(this);
@@ -665,14 +714,15 @@ function defineSceneStim(visual, util)
 			}
 			const camera = this.camera;
 			const orthographic = this._projection === "orthographic";
-			// frame() places the camera for the default position; the planes are placeholders.
+			// frame() places the camera for the default position; _applyClip() sets the planes.
+			// The projection calls give no planes, so that frame() does not keep earlier ones.
 			if (orthographic)
 			{
-				camera.setOrthographic({ height: 1, near: 0.1, far: 1 });
+				camera.setOrthographic({ height: 1 });
 			}
 			else
 			{
-				camera.setPerspective({ fovY: state.fov, near: 0.1, far: 1 });
+				camera.setPerspective({ fovYDeg: state.fov });
 			}
 			camera.frame(this._frameBox, { fill: state.fill, direction: [0, 0, -1], aspect: this._aspect });
 			let position = camera.position;
@@ -736,7 +786,7 @@ function defineSceneStim(visual, util)
 			}
 			else
 			{
-				this.camera.setPerspective({ fovY: state.fov, near, far });
+				this.camera.setPerspective({ fovYDeg: state.fov, near, far });
 			}
 		}
 
@@ -762,10 +812,10 @@ function defineSceneStim(visual, util)
 				this.light.intensity = state.lightIntensity;
 				this.light.color = state.lightColor.slice(0, 3);
 			}
-			if (dirty.has("environment") && this._hasEnvironment)
+			if (dirty.has("environment"))
 			{
 				this._scene.environmentIntensity = state.envIntensity;
-				this._scene.environmentRotation = state.envRotation;
+				this._scene.environmentRotationDeg = state.envRotation;
 			}
 			if (dirty.has("background"))
 			{
@@ -806,7 +856,7 @@ function defineSceneStim(visual, util)
 				textures.managedTextures.splice(managed, 1);
 			}
 			this._glTexture = this._baseTexture._glTextures[host.pixi.CONTEXT_UID].texture;
-			this._target = host.renderer.importTexture(this._glTexture, this._width, this._height);
+			this._target = host.renderer.importTarget(this._glTexture, this._width, this._height);
 			this._dirty.add("render");
 		}
 
@@ -912,6 +962,7 @@ function defineSceneStim(visual, util)
 				}
 				this._target?.close();
 				this._scene?.close();
+				this.camera?.close();  // renderer cameras outlive their scene
 			}
 			finally
 			{
@@ -933,7 +984,7 @@ function defineSceneStim(visual, util)
 
 /**
  * The model cache's memory limit, as MODEL_CACHE_MAX_BYTES in psychopy_filly/runtime.py, in
- * bytes of filly's estimate (Model.memory: cpuBytes + gpuBytes). 0 turns the cache off;
+ * bytes of filly's estimate (Asset.memory: cpuBytes + gpuBytes). 0 turns the cache off;
  * Infinity or null removes the limit. A 3D Scene's "Model cache (MiB)" parameter overrides it for
  * its window. Change it before the experiment calls setModel().
  *
@@ -960,20 +1011,23 @@ function cacheLimit(value)
 	return Math.round(number(value, "modelCacheMiB", 0) * 2 ** 20);
 }
 
-// Hidden prototypes of the model files that setModel() loaded in one window, as runtime.py's
-// _ModelCache. A file shown again, as in conditions that alternate models, is then a clone of
-// its prototype: nothing is fetched, loaded, or uploaded again. Clones share the prototype's
-// geometry, textures, and compiled materials, and have their own material instances, so a base
-// color or variant stays with its model. The prototypes live in a hidden scene of the cache, so
-// that a scene can close while other scenes of the window still clone them.
+// filly Assets of the model files that setModel() loaded in one window, as runtime.py's
+// _ModelCache. A file shown again, as in conditions that alternate models, is then a new model
+// of its kept asset (Scene.add()): nothing is fetched, loaded, or uploaded again. Models of an
+// asset share its geometry, textures, and compiled materials, and have their own material
+// instances, so a base color or variant stays with its model. Assets belong to the renderer, so
+// every scene of the window adds them, and a scene can close while others still use them.
+//
+// Each entry keeps its asset, also while no model shows it. The entries total at most the limit,
+// least recently used out first. An asset above the limit shows its one model and closes, which
+// releases its source data; the file is not cached.
 class ModelCache
 {
 	constructor(renderer)
 	{
 		this.renderer = renderer;
-		this.scene = null;  // the hidden scene, made at the first prototype
-		this.entries = new Map();  // key -> prototype, least recently used first
-		this.tooLarge = new Set();  // keys of files above the limit, loaded without source data
+		this.entries = new Map();  // URL -> Asset, least recently used first
+		this.tooLarge = new Set();  // URLs of files above the limit, not cached
 		this.limit = null;  // bytes from a scene's parameter; null: modelCache.maxBytes
 		this.loads = 0;  // files fetched and loaded, for tests
 	}
@@ -984,73 +1038,70 @@ class ModelCache
 		return limit === null ? Infinity : limit;
 	}
 
-	static bytes(model)
+	static bytes(asset)
 	{
-		const { cpuBytes, gpuBytes } = model.memory;
+		const { cpuBytes, gpuBytes } = asset.memory;
 		return cpuBytes + gpuBytes;
 	}
 
-	/** The estimated bytes that the prototypes hold. */
+	/** The estimated bytes that the kept assets hold. */
 	size()
 	{
 		let total = 0;
-		for (const prototype of this.entries.values())
+		for (const asset of this.entries.values())
 		{
-			total += ModelCache.bytes(prototype);
+			total += ModelCache.bytes(asset);
 		}
 		return total;
 	}
 
-	// Returns a new model of the file at `url` in the filly Scene `scene`: a clone, or a load. A
-	// clone keeps the material setup of its asset's load, which depends on the refraction
-	// setting of the loading scene, so that setting is part of the key.
-	async instance(url, scene, refraction)
+	// Returns a new model of the file at `url` in the filly Scene `scene`, from a kept or a new
+	// asset.
+	async instance(url, scene)
 	{
 		url = new URL(url, document.baseURI).href;
-		const key = `${refraction ? "refraction" : "plain"} ${url}`;
 		const limit = this.effectiveLimit();
-		if (limit === 0 || this.tooLarge.has(key))
+		if (limit === 0 || this.tooLarge.has(url))
 		{
 			this.loads++;
 			return scene.loadUrl(url);
 		}
-		if (!this.entries.has(key))
+		let asset = this.entries.get(url);
+		if (!asset)
 		{
 			this.loads++;
-			// The source data alone is about the file size, so a larger file cannot fit.
-			const fits = (bytes) => bytes <= limit;
-			const loaded = await scene.loadUrl(url, { clonable: fits });
-			if (!fits(loaded.fetchedBytes))
+			asset = await this.renderer.loadAssetUrl(url);
+			// The source data alone is about the file size, so a larger file cannot fit. Another
+			// setModel() can have cached the file during the fetch; this asset then shows once.
+			const tooLarge = asset.fetchedBytes > limit || ModelCache.bytes(asset) > limit;
+			if (tooLarge || this.entries.has(url))
 			{
-				this.tooLarge.add(key);
-				return loaded;
+				// The model keeps the GPU data; closing the asset releases the source data, which
+				// it would otherwise keep while the model shows. Once per file: the URL remembers.
+				try
+				{
+					return scene.add(asset);
+				}
+				finally
+				{
+					asset.close();
+					asset.dispose();
+					if (tooLarge)
+					{
+						this.tooLarge.add(url);
+					}
+				}
 			}
-			if (ModelCache.bytes(loaded) > limit)
-			{
-				// Loaded again without the source data, which the model would otherwise keep
-				// while it shows. Once per file: the key remembers it.
-				loaded.close();
-				loaded.dispose();
-				this.tooLarge.add(key);
-				this.loads++;
-				return scene.loadUrl(url);
-			}
-			// Another setModel() can have cached the file during the fetch.
-			if (!this.entries.has(key))
-			{
-				this.scene ??= this.renderer.createScene();
-				this.entries.set(key, loaded.clone({ scene: this.scene }));
-				this.evict(key);
-			}
-			return loaded;
 		}
-		const prototype = this.entries.get(key);
-		this.entries.delete(key);
-		this.entries.set(key, prototype);
-		const model = prototype.clone({ scene });
-		// A clone leaves bone and animation data with the asset, so the entry can grow past the
+		else
+		{
+			this.entries.delete(url);
+		}
+		this.entries.set(url, asset);
+		const model = scene.add(asset);
+		// A model leaves bone and animation data with the asset, so the entry can grow past the
 		// limit.
-		this.evict(key);
+		this.evict(url);
 		return model;
 	}
 
@@ -1058,38 +1109,32 @@ class ModelCache
 	{
 		let total = this.size();
 		const limit = this.effectiveLimit();
-		// A prototype can close while clones of it show: they keep the shared asset.
-		for (const [key, prototype] of [...this.entries])
+		// An asset can close while models of it show: they keep its GPU data.
+		for (const [url, asset] of [...this.entries])
 		{
 			if (total <= limit)
 			{
 				break;
 			}
-			if (key === keep)
+			if (url === keep)
 			{
 				continue;
 			}
-			this.entries.delete(key);
-			total -= ModelCache.bytes(prototype);
-			prototype.close();
-			prototype.dispose();
+			this.entries.delete(url);
+			total -= ModelCache.bytes(asset);
+			asset.close();
+			asset.dispose();
 		}
 	}
 
 	close()
 	{
-		for (const prototype of this.entries.values())
+		for (const asset of this.entries.values())
 		{
-			prototype.close();
-			prototype.dispose();
+			asset.close();
+			asset.dispose();
 		}
 		this.entries.clear();
-		if (this.scene)
-		{
-			this.scene.close();
-			this.scene.dispose();
-			this.scene = null;
-		}
 	}
 }
 
@@ -1335,8 +1380,9 @@ export class SceneModel
 	 * Shows another model file. Returns a promise that resolves when the model has loaded, its
 	 * shaders are compiled, and its textures are on the GPU. The other settings stay and apply to
 	 * the new model. Until the promise resolves, the scene is not drawn, so a frame never shows
-	 * the old model with the new trial's settings. A file that a scene of the window showed before
-	 * is a clone of its first load (see modelCache).
+	 * the old model with the new trial's settings. A file that an earlier setModel() of the window
+	 * loaded, and that the cache kept, is a new model of its kept asset (see modelCache). The model
+	 * given at creation loads with Scene.loadUrl() and is not cached.
 	 */
 	setModel(model, log = false)
 	{
@@ -1350,7 +1396,7 @@ export class SceneModel
 		scene._needUpdate = true;
 		const loading = (async () =>
 		{
-			const loaded = await scene._host.modelCache.instance(modelUrl(scene.win, name), scene._scene, scene._refraction);
+			const loaded = await scene._host.modelCache.instance(modelUrl(scene.win, name), scene._scene);
 			// A later setModel() or close() makes this load obsolete.
 			if (this._closed || this._loading !== loading)
 			{
@@ -1391,6 +1437,10 @@ export class SceneModel
 	setAutoDraw(value, log = false)
 	{
 		this._set("autoDraw", Boolean(value), ["visible"], log);
+		// As PsychoJS stimuli do. PsychoJS 2024.2 Builder code relies on it to run the per-frame
+		// updates; later versions also set the status themselves. PsychoJS.Status holds
+		// registry symbols, so this module needs no import of core.
+		this.status = Symbol.for(value ? "STARTED" : "FINISHED");
 	}
 
 	setRotation(rotation, log = false)

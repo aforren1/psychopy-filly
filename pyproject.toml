@@ -7,15 +7,15 @@ name = "psychopy-filly"
 version = "0.0.1.dev0"
 description = "PsychoPy Builder components that show 3D glTF models rendered with filly"
 readme = "README.md"
-# PsychoPy 2026.x supports Python 3.10 through 3.12; filly needs 3.10 or later.
-requires-python = ">=3.10,<3.13"
+# filly needs Python 3.10 or later. PsychoPy's own Python limits are PsychoPy's to declare.
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Alex Forrence", email = "alex.forrence@gmail.com" }]
-# PsychoPy is not listed. It ships as two distributions, "psychopy" (the app) and "psychopy-lib"
-# (the library). A requirement on one makes pip install it next to the other. The tested
-# PsychoPy versions are in psychopy_filly.runtime.TESTED_PSYCHOPY, which warns at run time.
-dependencies = ["filly>=0.1.0.dev0,<0.2", "numpy>=1.24"]
+# The standalone app registers the "psychopy" distribution, so the requirement is already met
+# there. 2024.2 is the first release with a Python 3.10 standalone install. The tested versions
+# are in psychopy_filly.runtime.TESTED_PSYCHOPY, which warns at run time for others.
+dependencies = ["filly>=0.2.0.dev0,<0.3", "numpy", "psychopy>=2024.2"]
 
 [project.urls]
 Homepage = "https://github.com/aforren1/psychopy-filly"
@@ -23,8 +23,7 @@ Documentation = "https://github.com/aforren1/psychopy-filly#readme"
 Issues = "https://github.com/aforren1/psychopy-filly/issues"
 
 [project.optional-dependencies]
-# psychopy-lib 2026.2.4 needs esprima to compile experiments but does not declare it.
-tests = ["psychopy-lib==2026.2.4", "esprima>=4.0.1", "pytest>=8"]
+tests = ["pytest>=8"]
 
 [project.entry-points."psychopy.experiment.components"]
 Scene3DComponent = "psychopy_filly.components.scene3d:Scene3DComponent"
@@ -41,6 +40,6 @@ psychopy_filly = ["web/*", "web/licenses/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-  "display: needs a display, an OpenGL driver, filly, and psychopy-lib",
+  "display: needs a display, an OpenGL driver, filly, and PsychoPy",
   "browser: needs Node.js, npm install in tests/web, and a browser (see tests/test_web.py)",
 ]

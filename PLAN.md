@@ -1,8 +1,8 @@
 # psychopy-filly: plan for PsychoPy Builder components
 
 This document describes a PsychoPy plugin that gives Builder users 3D stimuli from the filly
-renderer. Phases 0 and 1 are done, and the online component (phases 4 and 5) is built but not
-yet run on Pavlovia: see [Phases](#phases). Facts marked "(phase 0)" were checked on
+renderer. Phases 0, 1, and 3 are done, and the online component (phases 4 and 5) is built but
+not yet run on Pavlovia: see [Phases](#phases). Facts marked "(phase 0)" were checked on
 2026-09-29.
 
 ## Goal
@@ -28,8 +28,9 @@ yet run on Pavlovia: see [Phases](#phases). Facts marked "(phase 0)" were checke
 - Package `psychopy-filly`, module `psychopy_filly`. The PsychoPy plugin guide requires the
   `psychopy-` prefix and a module name with underscores.
 - Keep the plugin in its own repository. Unlike the MATLAB frontend, it contains no native code:
-  it generates Python and JavaScript that call filly's public API, and it depends on a released
-  filly version.
+  it generates Python and JavaScript that call filly's public API, and it is meant to depend on
+  a released filly version. That is not true yet: the runtime needs filly 0.2, which is not on
+  PyPI (see [Dependencies and compatibility](#dependencies-and-compatibility)).
 
 ## How PsychoPy plugins work
 
@@ -69,8 +70,10 @@ against psychopy-lib 2026.2.4.
   (`"PsychoPy"`, `"PsychoJS"`, or both), `plugin` (the package name), `iconFile`, and `tooltip`.
   Parameters are `Param` objects with a `valType` (for example `'file'`), an `updates` mode, and
   `allowedUpdates`: `'constant'`, `'set every repeat'`, or `'set every frame'`.
-  Also (phase 0): `iconSVG` (the icon that Studio shows), `version` (earliest PsychoPy version),
-  and `beta`. The wxPython app takes `iconFile`'s stem and folder and loads
+  Also (phase 0): `iconSVG` (the icon that Studio shows), `version` (the PsychoPy version that
+  added the component; for an experiment whose **Use version** is earlier, Builder saves a legacy
+  copy without it, through `Experiment.sanitizeForVersion()`), and `beta`. The components set `version` to `"2024.2.0"`, the
+  baseline below. The wxPython app takes `iconFile`'s stem and folder and loads
   `<folder>/<theme>/<stem>*.png` for the themes `classic`, `light`, and `dark`, with `@2x`
   variants, as the template does.
 - **Code generation hooks** in `psychopy/experiment/components/_base.py`: `writePreCode`,
@@ -82,8 +85,8 @@ against psychopy-lib 2026.2.4.
   creation". `BaseVisualComponent.writeFrameCode` writes `setAutoDraw(True/False)` and one
   `set<Param>(value, log=False)` call per parameter that is set every frame; the window's flip
   then calls the stimulus's `draw()`. `writeExperimentEndCode` writes at the end of `run()`,
-  which Escape skips. Code that must run on both paths appends a function to the script's
-  `runAtExit` list: `endExperiment()` calls it before `quit()` closes the window.
+  which Escape skips. PsychoPy 2026.2 scripts have a `runAtExit` list that `endExperiment()`
+  calls on both paths; PsychoPy 2024.2 scripts do not.
   `exp.requireImport()` adds an import at the top of the script.
 - **Online resources.** The JavaScript export collects the files named by `'file'` parameters
   into the experiment's resource list. Phase 0 checked the Python side:
@@ -143,8 +146,6 @@ fails at compile time. Decisions:
   pose, visibility, and animation changes do not. Camera position overrides it.
 - Camera from file is a model parameter. The scene renders through it; two models of one scene
   with a file camera are a compile error and a runtime error.
-- Precompiled shaders stays on the scene. One renderer serves a window, so the first scene
-  decides; the runtime warns when a later one differs.
 - The compile fails if a model's scene is missing, is not a 3D Scene, or comes after the model.
 - A model is hidden until its start. Filament compiles only what it draws, so the warm-up render
   at creation shows the model once. Creation and `setModel()` then wait until the GPU has done
@@ -156,17 +157,24 @@ fails at compile time. Decisions:
   worst frame interval from 33 to 250 ms to 17 ms in Chrome.
 - A model that changes per repeat starts without a file (`SceneModel(scene, None)`), so no
   stand-in loads at the start of the experiment.
-- Each window (one filly renderer) caches the files that `setModel()` loaded as clonable
-  prototypes, and later changes to a cached file clone them into the scene that asks
-  (`Model.clone(scene=)`; decisions of 2026-10-04 and 2026-10-05). The prototypes live in a
-  hidden scene of the cache, so that closing the scene that first loaded a file leaves its
-  prototype usable; a test closes that scene and clones again. The key holds the scene's
-  refraction setting, because a clone keeps the material setup of its asset's load.
-- The cache has one limit, in filly's memory estimate of the prototypes (`Model.memory`:
-  `cpu_bytes + gpu_bytes`, which include what earlier clones left with the asset), least
-  recently used out first. A file larger than the limit loads without source data; a file
-  whose estimate after a clonable load is above the limit loads again without it, once. Only
-  the prototypes count: we limit the memory that the cache keeps without being asked, not the
+- Each window (one filly renderer) caches the files that `setModel()` loaded as filly
+  `Asset`s, and later changes to a cached file add a new model of the asset to the scene that
+  asks (`renderer.load_asset()`, `scene.add()`; decisions of 2026-10-04, 2026-10-05, and
+  2026-10-12). Assets belong to the renderer, so closing the scene that first loaded a file
+  leaves its asset usable; a test closes that scene and adds the asset again. Until 2026-10-12
+  the Python runtime kept clonable prototypes in a hidden scene and keyed them by the scene's
+  refraction setting; filly then replaced cloning with assets and removed the refraction
+  setting. The web runtime (filly-psychojs.js) followed with the web vendor of 2026-10-12; it
+  keys its assets by URL.
+- Each window also shares one filtered filly `Environment` per environment file, and one for
+  the uniform environment, among its scenes (2026-10-12): a panorama is filtered once, not once
+  per scene. Intensity and rotation stay per scene.
+- The cache has one limit, in filly's memory estimate of the assets (`Asset.memory`:
+  `cpu_bytes + gpu_bytes`, which include what earlier models left with the asset), least
+  recently used out first. A file larger than the limit loads without source data; an asset
+  whose estimate is above the limit shows its one model and closes, which releases its source
+  data, and the file is not cached. Only the kept assets count: we limit the memory that the
+  cache keeps without being asked, not the
   experimenter's models. Defaults: 1 GiB locally (`MODEL_CACHE_MAX_BYTES`), 256 MiB online
   (`modelCache.maxBytes`), because the WebAssembly heap never shrinks: online, the limit
   bounds the high-water mark. The 3D Scene parameter **Model cache (MiB)** overrides both;
@@ -196,8 +204,6 @@ scene = filly_runtime.SceneStim(
     pos=(0, 0), size=(0.6, 0.6), units=win.units, ori=0.0, opacity=None,
     colorSpace='rgb',
     depth=0.0)
-if filly_runtime.close_all not in runAtExit:
-    runAtExit.append(filly_runtime.close_all)
 cube = filly_runtime.SceneModel(
     scene, 'cube.glb', name='cube', colorSpace='rgb',
     rotation=None,
@@ -209,7 +215,7 @@ scene.setAutoDraw(True)
 cube.setAutoDraw(True)
 cube.setRotation((20, 90*t, 0), log=False)
 
-# writeExperimentEndCode: normal end only. runAtExit covers Escape.
+# writeExperimentEndCode: normal end only. On Escape, the runtime closes filly in win.close().
 filly_runtime.close_all()
 ```
 
@@ -222,8 +228,10 @@ after the parameter key (`_getParamCaps`). Direct attribute assignments such as
   touch one module, not the code generator.
 - `SceneStim.draw()` renders only when the scene or one of its models changed since the last draw. A static stimulus
   costs one texture draw per frame. (phase 0: a test counts `renderer.stats.frames_rendered`.)
-- The close order (target, renderer, window) goes in `writeExperimentEndCode` and in `runAtExit`.
-  `writeExperimentEndCode` alone misses Escape (phase 0). The runtime also registers an `atexit`
+- The close order (target, renderer, window) goes in `writeExperimentEndCode`, which misses Escape
+  (phase 0). The runtime replaces `close` on each window it renders into: the replacement closes
+  the window's renderer, then the window. This works in every PsychoPy version and in Coder
+  scripts; `runAtExit` exists only in newer versions. The runtime also registers an `atexit`
   handler; PsychoPy registered its window close earlier, so the runtime's handler runs first.
   filly also releases everything if the window closes first, so an aborted experiment does not
   crash.
@@ -234,26 +242,36 @@ after the parameter key (`_getParamCaps`). Direct attribute assignments such as
   reference external `.bin` and image files that PsychoPy does not know about. Recommend `.glb`,
   and have the component list a `.gltf` file's external files as extra resources.
 - Load models in init code. First load compiles shaders and can take hundreds of milliseconds.
-  Expose filly's `precompiled_shaders` option in the Advanced tab for experiments that load many
-  models.
 
 ## Dependencies and compatibility
 
 - `psychopy-filly` depends on `filly` and on the PsychoPy versions its adapter supports. The filly
-  PsychoPy adapter uses PsychoPy internals: the `ImageStim` texture-provider path, the window's
-  image shader program, and a patched fragment shader. Pin the tested PsychoPy versions, and test
+  PsychoPy adapter uses PsychoPy internals: `ImageStim`'s texture name and display list, the
+  window's image shader program, and a patched fragment shader. Pin the tested PsychoPy versions, and test
   each PsychoPy release before widening the pin.
-- PsychoPy cannot be a pip dependency (phase 0). It ships as two distributions, `psychopy` (the
-  standalone app's) and `psychopy-lib`. A requirement on either makes pip install it next to the
-  other. `psychopy_filly.runtime.TESTED_PSYCHOPY` lists the tested versions and the runtime logs a
-  warning for others. The `tests` extra pins `psychopy-lib==2026.2.4`, the version filly's adapter
-  is tested with.
-- psychopy-lib 2026.2.4 cannot compile experiments without `esprima`, which it does not declare
-  (phase 0). The standalone app includes it.
+- PsychoPy ships as two distributions, `psychopy` (the standalone app's) and `psychopy-lib`. A
+  requirement on either makes pip install it next to the other. Phase 0 therefore declared
+  neither. Since 2026-10-12 the package requires `psychopy>=2024.2`: the owner assumes the
+  `psychopy` distribution. The PsychoPy 2026.1.2 app registers `psychopy`, and a pip dry run
+  with the app's Python installed nothing for `psychopy>=2024.2`.
+  `psychopy_filly.runtime.TESTED_PSYCHOPY` lists the tested versions and the runtime logs a
+  warning for others. README.md "Test" installs each tested version.
+- Baseline (2026-10-12): PsychoPy 2024.2, the first release with a Python 3.10 standalone
+  install (earlier ones ship Python 3.6 or 3.8; filly needs 3.10). Tested: 2024.2.4 (Python
+  3.10) and 2026.2.4 (Python 3.11), locally (code generation, display, Escape order) and in
+  the browser with the matching PsychoJS. 2024.2 needed three changes: filly's adapter gives
+  `ImageStim` a placeholder image (no texture providers in 2024.2); the runtime closes filly in
+  `win.close()` (2024.2 scripts have no `runAtExit`); the JavaScript `SceneModel.setAutoDraw()`
+  sets `status` (PsychoJS 2024.2 Builder code relies on it for per-frame updates).
+- The `psychopy` distribution of 2023.2 to 2024.2 requires `pypi-search`, which PyPI no longer
+  has, and 2024.2 requires wxPython, which has no Linux wheels on PyPI.
+  `tests/psychopy-overrides.txt` removes both for uv. psychopy-lib 2026.2.4 cannot compile
+  experiments without `esprima`, which it does not declare (phase 0); `psychopy` declares it.
 - PsychoPy standalone installs ship their own Python. filly publishes wheels for Python 3.10, 3.11,
   and 3.12 and later (one `cp312-abi3` wheel), for Windows and Linux x86_64. Check the Python
   version of each standalone release. PsychoPy 2026.1.2 (Windows) ships Python 3.10.11,
-  pyglet 1.4.11, and wxPython 4.2.5 (phase 0). No filly wheel exists yet.
+  pyglet 1.4.11, and wxPython 4.2.5 (phase 0). The runtime needs filly 0.2, which is not on
+  PyPI yet; filly 0.1.0 on PyPI has these wheels but not the API that the runtime calls.
 - PsychoPy pins pyglet 1.4.11 on Windows only. psychopy-lib 2026.2.4 requires pyglet 1.5.27 on
   other platforms (phase 0), so Linux runs need their own tests. Version 1.4.11 can crash when a
   program closes a window and then opens another (see filly's validation reference). A normal
@@ -294,12 +312,11 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
   each frame, or stacked canvases) are not needed.
 - **Hand-over.** Both renderers cache GL state. filly enters the context before its first call
   after PIXI drew and hands it back at PIXI's `prerender` event. See filly's
-  [web explanation](../filly/docs/explanation/web.md) for the state that each side must reset;
+  [web explanation](https://github.com/aforren1/filly/blob/main/docs/explanation/web.md) for the state that each side must reset;
   three defects found during the spike are listed there.
 - **Same material path.** filly's own provider and archive run in the browser, so filly's
   extensions (anisotropy, iridescence, diffuse transmission) and its orthographic refraction fix
-  also work online. No parameter is local-only, except `precompiledShaders`, which has no effect
-  online.
+  also work online. No parameter is local-only.
 - **Vendored files.** The plugin ships filly's web build in `psychopy_filly/web`, and the compile
   copies it into the experiment folder (`filly/`). The experiment imports it from its own origin.
   No CDN hosts filly's build, and a same-origin copy also loads on a cross-origin-isolated page.
@@ -323,7 +340,7 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
 | 0 | A stub component that draws a rotating cube through `filly.integrations.psychopy`. | It appears and compiles in the wxPython Builder and in Studio, runs locally on Windows, and the experiment-end hook closes everything in order. Done 2026-09-29; see [Phase 0 results](#phase-0-results). |
 | 1 | The "3D Model" component and `psychopy_filly.runtime`, local only. | A Builder experiment shows the same pixels as the equivalent direct filly script. Per-frame parameters cost no reload. Tests run under PsychoPy with a display. Done 2026-10-03; see [Phase 1 results](#phase-1-results). |
 | 2 | Packaging: PyPI release, documentation, the PsychoPy version pin, and a request to add the plugin to `plugins.json`. | Users install it from the plugin manager. |
-| 3 | "3D Scene" and "3D Object" components, if phase 1 users ask for several objects. | Two objects with separate poses render in one scene. |
+| 3 | "3D Scene" and "3D Object" components, if phase 1 users ask for several objects. | Two objects with separate poses render in one scene. Done 2026-10-04 as "3D Scene" and "3D Model"; see [Components](#components). |
 | 4 | Online spike: build Filament 1.77.1 for WebAssembly, and show a `.glb` model in a hand-written PsychoJS experiment. | Frame time is measured in Chrome and Firefox, and the resource loading question is answered. Done 2026-10-03 on one laptop; see [Online results](#online-results). |
 | 5 | Online component: `writeInitCodeJS`, `writeFrameCodeJS`, the PsychoJS runtime, and filly's web build. | A Builder experiment runs on Pavlovia, and the difference from local output is measured and documented. Built and measured on 2026-10-03; not run on Pavlovia yet. |
 
@@ -345,8 +362,8 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
 
 ### Phase 1 results
 
-- The component has the parameters of the [table above](#phase-1-one-3d-model-component), as
-  listed in the README. Differences from the table: field of view, view height, clipping planes,
+- The component has the parameters listed in the [README](README.md#parameters).
+  Differences from the phase 1 plan: field of view, view height, clipping planes,
   and light and environment intensity can change every frame; the environment source is
   constant, because loading a panorama filters it.
 - Each changing parameter has a `set<Name>()` method on `SceneStim` or `SceneModel`. A test calls each setter with a new
@@ -356,7 +373,6 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
 - psychopy-lib 2026.2.4: the code generation and display tests pass (`tests/test_codegen.py`,
   `tests/test_runtime.py`). PsychoPy 2026.1.2 app: discovery, the wxPython compile, and the
   Studio calls give the same initialization code (`tools/check_builder.py`).
-- filly gained `create_renderer(win, precompiled_shaders=...)` for the Advanced tab option.
 
 ### Online results
 
@@ -372,14 +388,14 @@ Firefox in headless mode with the GPU.
 
   | | Chrome | Edge | Firefox |
   |---|---|---|---|
-  | `ModelStim.create()`, including the module start | 0.41 to 0.44 s | 0.45 to 0.66 s | 0.44 to 0.53 s |
+  | `ModelStim.create()` (the runtime before 2026-10-04), including the module start | 0.41 to 0.44 s | 0.45 to 0.66 s | 0.44 to 0.53 s |
   | Shader compilation in `create()`, without blocking | 190 to 195 ms | 216 to 278 ms | none: compiles at the first render |
   | First render | 29 to 31 ms | 29 to 45 ms | 237 to 269 ms |
   | Longest frame during `create()` | 67 to 100 ms | 83 to 150 ms | 250 to 283 ms |
   | CPU time of a render, median (95th percentile) | 0.6 to 0.7 (1.4) ms | 0.6 (1.2 to 1.4) ms | 1 (2) ms |
   | Frame interval, median | 16.7 ms | 16.7 ms | 16.7 ms |
 
-  Before 2026-10-03, `ModelStim.create()` blocked Chrome for one frame of 0.47 to 0.5 s:
+  Before 2026-10-03, `ModelStim.create()` (now `SceneStim.create()` and `SceneModel.create()`) blocked Chrome for one frame of 0.47 to 0.5 s:
   renderer 45 ms, model 100 ms, uniform environment 224 ms, target 25 ms, first render 141 ms.
   Now it yields a frame between steps, the uniform environment skips filtering, and
   `renderer.prepare()` compiles the shaders without blocking before the warmup render. Firefox
@@ -431,7 +447,8 @@ Instead:
   browsers with Node.js and puppeteer-core: a rotating model, the comparison with desktop
   filly, cross-origin isolation, Escape, a `.gltf` with an external buffer, the upload check,
   an opacity ramp (one sprite, no added PIXI listeners), a scene hidden past PIXI's texture
-  garbage collection, and A/B/A/B model changes through the cache.
+  garbage collection, A/B/A/B model changes through the cache, a model too large for the cache,
+  two models in one scene, the render scale, and two scenes that share one environment.
 
 ## Risks and open questions
 
@@ -443,7 +460,7 @@ Instead:
 | Front-buffer reads of `useFBO=True` windows return only the background on the test laptop | The screen shows the stimuli (user check, 2026-10-03); tests read the back buffer | Check other GPUs; the README keeps "average (no FBO)" as a troubleshooting step |
 | Command-line compile (`psyexpCompile`, used with **Use version**) drops plugin components | Seen in phase 0 | Document; report upstream |
 | PsychoJS export defects in psychopy-lib 2026.2.4 (f-string participant default; `MaxDuration = None`) | Seen on 2026-10-03, also without filly, for experiments made in Python | Check in the Builder app; report upstream |
-| PsychoPy standalone Python versions and filly wheel coverage | Not checked | Check at phase 2 for each supported standalone release |
+| PsychoPy standalone Python versions and filly wheel coverage | Checked for 2024.2 and later (see [Dependencies and compatibility](#dependencies-and-compatibility)); filly 0.2 wheels are not published | Publish filly 0.2; check each new standalone release |
 | `.gltf` external files not collected as resources | Known; they load if they are in the experiment folder | Recommend `.glb`; list external files in the component |
 | WebGL1 on Android and other non-Apple mobile devices | The component stops with a message | Set PIXI's `PREFER_ENV` before the window opens, if PsychoJS allows it; test on devices |
 | Frames during stimulus creation take up to 150 ms (Chrome, Edge) or 283 ms (Firefox) | Measured on 2026-10-03 after frame yields, the uniform environment, and `prepare()` | Split the remaining steps; give transparent scenes an alpha swap chain so that Filament needs no blit; wait for Firefox to support `KHR_parallel_shader_compile` |

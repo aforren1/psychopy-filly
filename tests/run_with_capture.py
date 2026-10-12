@@ -26,7 +26,7 @@ def main():
     events = []
 
     from psychopy import visual
-    from filly.integrations.psychopy import SharedTarget
+    from filly.integrations.psychopy import HostTarget
     from psychopy_filly import runtime
 
     flip = visual.Window.flip
@@ -49,10 +49,13 @@ def main():
             self.win._getFrame(buffer="back").save(out_dir / f"frame_{counter['n']}.png")
         return result
 
-    target_close = SharedTarget.close
+    target_close = HostTarget.close
 
     def logged_target_close(self):
-        events.append(("target", self.closed, _open(self._win)))
+        # Only the close that releases the target; renderer.close() closes it before the
+        # stimulus's own close() repeats the call.
+        if not self.closed:
+            events.append(("target", self.closed, _open(self._win)))
         target_close(self)
 
     host_close = runtime._Host.close
@@ -84,7 +87,7 @@ def main():
 
     visual.Window.flip = capture_flip
     runtime.SceneStim.draw = capturing_draw
-    SharedTarget.close = logged_target_close
+    HostTarget.close = logged_target_close
     runtime._Host.close = logged_host_close
     visual.Window.close = logged_window_close
 

@@ -134,13 +134,14 @@ def _desktop_reference(cube_path):
         model.rotation_euler_deg = (20, 35, 10)
         center = np.asarray(model.bounds).mean(axis=0)
         model.position = tuple(np.array([0.1, -0.05, 0]) - np.asarray(model.transform)[:3, :3] @ center)
-        camera = scene.create_camera()
-        camera.set_perspective(fov_y=35, near=0.5, far=10)
+        camera = renderer.create_camera()
+        camera.set_perspective(fov_y_deg=35, near=0.5, far=10)
         camera.position = (0.5, 1.0, 3.0)
         camera.look_at((0, 0, 0))
         scene.camera = camera
         scene.add_directional_light(direction=(-1, -2, -1), intensity=80000)
-        scene.set_environment(np.ones((8, 16, 3), np.float32), intensity=15000)
+        scene.environment = renderer.create_environment(np.ones((8, 16, 3), np.float32))
+        scene.environment_intensity = 15000
         scene.background = (*linear, 1.0)
         target = renderer.create_render_target(width=320, height=240)
         renderer.render(scene, target)
@@ -327,8 +328,8 @@ def test_hidden_scene_survives_texture_gc(tmp_path, node, psychojs_lib):
 
 
 def test_model_cache_alternation(tmp_path, node, psychojs_lib):
-    """A/B/A/B models: each file is fetched and loaded once, and a clone renders the pixels of a
-    load."""
+    """A/B/A/B models: each file is fetched and loaded once, and a model of a kept asset renders
+    the pixels of a load."""
     folder = _experiment(tmp_path, psychojs_lib, model="default.glb", duration=20.0, rotation="(20, 30, 0)",
                          modelCacheMiB="64")
     report = _run(node, folder, "chrome", evaluate="""
@@ -352,8 +353,41 @@ def test_model_cache_alternation(tmp_path, node, psychojs_lib):
     result = report["evaluate"]
     shots = result["shots"]
     assert result["loads"] == 2 and result["entries"] == 2, result
-    # The 3D Scene's parameter set the limit; the estimate counts both prototypes.
+    # The 3D Scene's parameter set the limit; the estimate counts both assets.
     assert result["limit"] == 64 * 2**20 and 0 < result["bytes"] < result["limit"]
     assert shots[0] == shots[2] == shots[4] and shots[1] == shots[3] and shots[0] != shots[1], result
-    # The shown model and two hidden prototypes.
-    assert result["models"] == 3
+    # The assets belong to the renderer and are not models: only the shown model is live.
+    assert result["models"] == 1
+
+
+def test_model_cache_too_large(tmp_path, node, psychojs_lib):
+    """A file above the cache limit shows its one model and is not cached; showing it again loads
+    it again."""
+    folder = _experiment(tmp_path, psychojs_lib, model="default.glb", duration=20.0, rotation="(20, 30, 0)")
+    report = _run(node, folder, "chrome", screenshots=[0.2], evaluate="""
+        const cache = scene._host.modelCache;
+        cache.limit = 1;  // bytes: every file is too large
+        for (const name of ["cube.glb", "default.glb", "cube.glb"]) {
+            await model.setModel(name);
+        }
+        return { loads: cache.loads, entries: cache.entries.size, tooLarge: cache.tooLarge.size,
+                 models: scene._host.renderer.stats.liveModels, materials: Object.keys(model._materials) };
+    """)
+    assert report["evaluate"] == {"loads": 3, "entries": 0, "tooLarge": 2, "models": 1,
+                                  "materials": ["painted", "red"]}
+    assert 0.02 < _model_fraction(_screenshot(report["screenshots"][0])) < 0.5
+
+
+def test_scenes_share_environment(tmp_path, node, psychojs_lib):
+    """The scenes of a window share one uniform environment, which the host keeps after a scene
+    closes."""
+    folder = _experiment(tmp_path, psychojs_lib, duration=10.0)
+    report = _run(node, folder, "chrome", evaluate="""
+        const second = await runtime.SceneStim.create({ win: scene.win, name: "second", size: [0.2, 0.2],
+                                                        units: "height" });
+        const shared = second._scene.environment.equals(scene._scene.environment);
+        second.close();
+        return { shared, environments: scene._host.environments.size,
+                 open: !(await scene._host.environments.get("uniform")).closed };
+    """)
+    assert report["evaluate"] == {"shared": True, "environments": 1, "open": True}

@@ -3,10 +3,11 @@
 This module is the only part of the plugin that calls the filly API. Generated experiment code
 calls `SceneStim`, `SceneModel`, and `close_all()`; the component code does not know filly.
 
-One filly renderer serves each PsychoPy window. Close order: every target, then the renderer,
-then the window. `close_all()` does the first two steps. The generated code calls it from
-`runAtExit`, which PsychoPy runs before `quit()` closes the window, on the normal path and on
-Escape. An `atexit` handler covers scripts that stop with an exception.
+One filly renderer serves each PsychoPy window. Close order: the renderer, which also closes
+every target, model, and scene that it created, then the window. `close_all()` closes the
+renderers; the generated code calls it at the end of the experiment. Escape skips that call, so the runtime also closes a window's renderer
+when the window's `close()` starts. An `atexit` handler covers scripts that stop with an
+exception.
 """
 
 import atexit
@@ -32,7 +33,7 @@ __all__ = ["SceneStim", "SceneModel", "close_all", "TESTED_PSYCHOPY", "DEFAULT_M
 DEFAULT_MODEL = "default.glb"
 
 # The filly adapter uses PsychoPy internals (ImageStim texture path, the window's image shader).
-TESTED_PSYCHOPY = ("2026.2.4",)
+TESTED_PSYCHOPY = ("2024.2.4", "2026.2.4")
 
 # Memory limit of each window's model cache (see _ModelCache), in bytes of filly's estimate.
 # 0 turns the cache off; None removes the limit. A 3D Scene's "Model cache (MiB)" parameter
@@ -67,7 +68,7 @@ def _check_environment(win):
 class _Host:
     """The renderer for one window and the stimuli that use it."""
 
-    def __init__(self, win, precompiled_shaders):
+    def __init__(self, win):
         # Imported here so that the Builder component and code generation work where filly is
         # not installed, for example in the standalone PsychoPy app.
         import filly
@@ -76,40 +77,80 @@ class _Host:
         # Filament's startup details would fill the Runner output; warnings and errors remain.
         filly.set_log_level("warning")
         self.win = win
-        self.renderer = create_renderer(win, precompiled_shaders=precompiled_shaders)
+        self.renderer = create_renderer(win)
         self.stims = []
         self.transparent_ready = False  # whether a transparent scene has rendered
         self.model_cache = _ModelCache(self.renderer)
+        self._environments = {}  # key: filly Environment that the window's scenes share
+
+    def environment(self, path=None):
+        """Return the window's Environment of a panorama or KTX file, or with None the uniform one.
+
+        Scenes share it, so a file is read and filtered once per window (54 to 83 ms for a
+        panorama on the test laptop), not once per scene. A changed file is loaded again.
+        """
+        key = "uniform"
+        if path is not None:
+            path = Path(str(path))
+            try:
+                stat = path.stat()
+                key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                key = None  # filly reports the error
+        environment = self._environments.get(key)
+        if environment is None:
+            if path is None:
+                environment = self.renderer.create_environment(_uniform_panorama())
+            elif path.suffix.lower() == ".ktx":
+                environment = self.renderer.load_environment_ktx(str(path))
+            else:
+                environment = self.renderer.load_environment(str(path))
+            if key is not None:
+                self._environments[key] = environment
+        return environment
 
     def close(self):
-        # Targets first: closing a target fences the window's last draw of it.
+        # The stimuli close their objects while the renderer is open. The renderer's close then
+        # releases the rest, such as the cached assets and the environments, and also the
+        # targets of stimuli whose close failed.
         try:
             for stim in list(self.stims):
                 stim.close()
-            self.model_cache.close()
         finally:
             self.renderer.close()
 
 
-def _host_for(win, precompiled_shaders):
+def _host_for(win):
     global _atexit_registered
     for host in _hosts:
         if host.win is win:
-            if host.renderer.precompiled_shaders != precompiled_shaders:
-                # One renderer per window: the first stimulus decides.
-                logging.warning(
-                    f"precompiled_shaders={precompiled_shaders} ignored: the window's renderer "
-                    f"already uses {host.renderer.precompiled_shaders}")
             return host
     _check_environment(win)
-    host = _Host(win, precompiled_shaders)
+    host = _Host(win)
     _hosts.append(host)
+    _close_before(win, host)
     if not _atexit_registered:
         # PsychoPy registered its window close at window creation, earlier than this. atexit runs
         # handlers in reverse order, so this one runs while the window is still open.
         atexit.register(close_all)
         _atexit_registered = True
     return host
+
+
+def _close_before(win, host):
+    # Generated scripts close the window in quit(), after Escape too. PsychoPy 2026.2 runs
+    # runAtExit before that, but 2024.2 has no component hook there. The window's own close()
+    # is the one hook that every version, and Coder scripts, go through.
+    def close(*args, **kwargs):
+        del win.close  # back to Window.close; drops the reference cycle
+        try:
+            if host in _hosts:
+                _hosts.remove(host)
+                host.close()
+        finally:
+            win.close(*args, **kwargs)
+
+    win.close = close
 
 
 def close_all():
@@ -271,29 +312,29 @@ def _cache_limit(value):
 
 
 class _ModelCache:
-    """Hidden prototypes of the model files that setModel() loaded in one window.
+    """filly Assets of the model files that setModel() loaded in one window.
 
-    A file shown again, as in conditions that alternate models, is then a clone of its prototype.
-    On the test laptop (Intel Iris Xe), a clone took 0.1 to 8 ms where a load took 1 to 150 ms,
-    for files of 0.07 to 7.4 MB, and needs no texture upload. Clones share the prototype's
-    geometry, textures, and compiled materials, and have their own material instances, so a base
-    color or variant stays with its model.
+    A file shown again, as in conditions that alternate models, is then a new model of its kept
+    asset (Scene.add()). On the test laptop (Intel Iris Xe), that took 0.1 to 8 ms where a load
+    took 1 to 150 ms, for files of 0.07 to 7.4 MB, and needs no texture upload. Models of an asset
+    share its geometry, textures, and compiled materials, and have their own material instances,
+    so a base color or variant stays with its model.
 
-    The cost: each prototype keeps its asset, also while no model shows it: the source data that
-    cloning needs and the decoded textures and geometry on the GPU. The entries total at most the
-    limit in filly's estimate (Model.memory: cpu_bytes + gpu_bytes, which also holds what earlier
-    clones left), least recently used out first. A model above the limit loads without source
-    data and is not cached. Models that show are the experiment's own; only the prototypes count.
+    The cost: each entry keeps its asset, also while no model shows it: the source data that new
+    models need and the decoded textures and geometry on the GPU. The entries total at most the
+    limit in filly's estimate (Asset.memory: cpu_bytes + gpu_bytes, which also holds what earlier
+    models left), least recently used out first. An asset above the limit shows its one model and
+    closes, which releases its source data; the file is not cached. Models that show are the
+    experiment's own; only the kept assets count.
 
-    The prototypes live in a hidden scene of the cache, so that a scene can close while other
-    scenes of the window still clone them. filly clones across the scenes of one renderer.
+    Assets belong to the renderer, so every scene of the window adds them, and a scene can close
+    while others still use them. They close with the renderer.
     """
 
     def __init__(self, renderer):
         self._renderer = renderer
-        self._scene = None  # the hidden scene, made at the first prototype
-        self._entries = collections.OrderedDict()  # key: prototype, least recently used first
-        self._too_large = set()  # keys of files above the limit, loaded without source data
+        self._entries = collections.OrderedDict()  # key: Asset, least recently used first
+        self._too_large = set()  # keys of files above the limit, not cached
         self.limit = None  # bytes from a scene's parameter; None: MODEL_CACHE_MAX_BYTES
         self.loads = 0  # files loaded, for tests
 
@@ -302,20 +343,16 @@ class _ModelCache:
         return math.inf if limit is None else limit
 
     @staticmethod
-    def _bytes(model):
-        memory = model.memory
+    def _bytes(asset):
+        memory = asset.memory
         return memory.cpu_bytes + memory.gpu_bytes
 
     def size(self):
-        """The estimated bytes that the prototypes hold."""
-        return sum(self._bytes(prototype) for prototype in self._entries.values())
+        """The estimated bytes that the kept assets hold."""
+        return sum(self._bytes(asset) for asset in self._entries.values())
 
-    def instance(self, path, scene, refraction):
-        """Return a new filly Model of the file at `path` in `scene`: a clone, or a load.
-
-        A clone keeps the material setup of its asset's load, which depends on the refraction
-        setting of the loading scene, so that setting is part of the key.
-        """
+    def instance(self, path, scene):
+        """Return a new filly Model of the file at `path` in `scene`, from a kept or new asset."""
         path = Path(path)
         limit = self._limit()
         try:
@@ -323,53 +360,43 @@ class _ModelCache:
             size = _file_size(path)
         except (OSError, ValueError, UnicodeDecodeError):
             size = None  # filly reports the error
-        key = None if size is None else (str(path.resolve()), stat.st_size, stat.st_mtime_ns, refraction)
+        key = None if size is None else (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
         # The source data alone is about the file size, so a larger file cannot fit.
         if key is None or key in self._too_large or size > limit:
             self.loads += 1
             return scene.load(str(path))
-        prototype = self._entries.get(key)
-        if prototype is None:
+        asset = self._entries.get(key)
+        if asset is None:
             self.loads += 1
-            loaded = scene.load(str(path), clonable=True)
-            if self._bytes(loaded) > limit:
-                # Loaded again without the source data, which the model would otherwise keep
-                # while it shows. Once per file: the key remembers it.
-                loaded.close()
-                self._too_large.add(key)
-                self.loads += 1
-                return scene.load(str(path))
-            if self._scene is None:
-                self._scene = self._renderer.create_scene()
-            self._entries[key] = loaded.clone(scene=self._scene)
-            self._evict(key)
-            return loaded
-        self._entries.move_to_end(key)
-        model = prototype.clone(scene=scene)
-        # A clone leaves bone and animation data with the asset, so the entry can grow past the
+            asset = self._renderer.load_asset(str(path))
+            if self._bytes(asset) > limit:
+                # The model keeps the GPU data; closing the asset releases the source data, which
+                # it would otherwise keep while the model shows. Once per file: the key remembers.
+                try:
+                    return scene.add(asset)
+                finally:
+                    asset.close()
+                    self._too_large.add(key)
+            self._entries[key] = asset
+        else:
+            self._entries.move_to_end(key)
+        model = scene.add(asset)
+        # A model leaves bone and animation data with the asset, so the entry can grow past the
         # limit.
         self._evict(key)
         return model
 
     def _evict(self, keep):
         total, limit = self.size(), self._limit()
-        # A prototype can close while clones of it show: they keep the shared asset.
+        # An asset can close while models of it show: they keep its GPU data.
         for key in list(self._entries):
             if total <= limit:
                 break
             if key == keep:
                 continue
-            prototype = self._entries.pop(key)
-            total -= self._bytes(prototype)
-            prototype.close()
-
-    def close(self):
-        for prototype in self._entries.values():
-            prototype.close()
-        self._entries.clear()
-        if self._scene is not None:
-            self._scene.close()
-            self._scene = None
+            asset = self._entries.pop(key)
+            total -= self._bytes(asset)
+            asset.close()
 
 
 class _Settings:
@@ -485,10 +512,6 @@ class SceneStim(MinimalStim, _Settings):
     msaa : {1, 2, 4, 8}
     shadows : bool
         Shadows from the directional light. Default False.
-    refraction : bool
-        Screen-space refraction for glass materials. Default False.
-    precompiledShaders : bool
-        filly's `precompiled_shaders` renderer option. The first scene in a window sets it.
     modelCacheMiB : float or str, optional
         Memory limit of the window's model cache in MiB (see `SceneModel.setModel()`). None:
         `MODEL_CACHE_MAX_BYTES`. 0 turns the cache off; 'unlimited' removes the limit. The first
@@ -504,9 +527,9 @@ class SceneStim(MinimalStim, _Settings):
                  environment="uniform", envFile=None, envIntensity=None, envRotation=None,
                  envVisible=False, backgroundColor=None, colorSpace="rgb",
                  toneMapping="linear", antialiasing="fxaa", msaa=1, shadows=False,
-                 refraction=False, precompiledShaders=False, modelCacheMiB=None, name=None, depth=0,
+                 modelCacheMiB=None, name=None, depth=0,
                  autoLog=None):
-        from filly.integrations.psychopy import SharedTarget
+        from filly.integrations.psychopy import HostTarget
 
         super().__init__(name=name, autoLog=False)
         self.__dict__["win"] = win
@@ -530,7 +553,7 @@ class SceneStim(MinimalStim, _Settings):
         self._camera_model = None  # the model whose file camera the scene uses, if any
         self._frame_box = _EMPTY_BOX
 
-        self._host = host = _host_for(win, bool(precompiledShaders))
+        self._host = host = _host_for(win)
         renderer = host.renderer
         limit = _cache_limit(modelCacheMiB)
         if limit is not None:
@@ -540,40 +563,32 @@ class SceneStim(MinimalStim, _Settings):
                 # One cache per window: the first scene that sets the limit decides.
                 logging.warning(f"modelCacheMiB={modelCacheMiB} ignored: the window's model cache "
                                 f"already has a limit of {host.model_cache.limit / 2**20} MiB")
-        self._refraction = bool(refraction)
         self._scene = scene = renderer.create_scene()
         try:
-            scene.refraction = bool(refraction)  # before loading: glass needs it at load
             scene.tone_mapping = toneMapping or "linear"
             scene.antialiasing = antialiasing or "none"
             scene.msaa = int(msaa or 1)
             scene.shadows = bool(shadows)
-            self.camera = scene.create_camera()
+            self.camera = renderer.create_camera()
             scene.camera = self.camera
             self.light = None
             if light:
                 self.light = scene.add_directional_light(direction=_DEFAULTS["lightDir"])
                 self.light.casts_shadows = bool(shadows)
-            if environment == "uniform":
-                scene.set_environment(_uniform_panorama())
-            elif environment == "file":
-                path = Path(str(envFile))
-                if path.suffix.lower() == ".ktx":
-                    scene.load_environment_ktx(str(path))
-                else:
-                    scene.load_environment(str(path))
+            if environment != "none":
+                scene.environment = host.environment(None if environment == "uniform" else envFile)
             self._has_environment = environment != "none"
             scene.environment_visible = bool(envVisible)
             # The visible environment is opaque and covers the background.
             self._opaque_environment = self._has_environment and bool(envVisible)
-            self._target = SharedTarget(renderer, win, width, height)
+            self._target = HostTarget(renderer, win, width=width, height=height)
         except BaseException:
             scene.close()
             raise
         host.stims.append(self)
         self._closed = False
 
-        self._image = self._target.as_psychopy_texture(win, size=size, pos=pos, units=units)
+        self._image = self._target.create_image_stim(size=size, pos=pos, units=units)
         self._image.ori = ori
         if opacity is not None:
             self._image.opacity = opacity
@@ -754,11 +769,12 @@ class SceneStim(MinimalStim, _Settings):
             return
         camera = self.camera
         orthographic = self._projection == "orthographic"
-        # frame() places the camera for the default position; the planes are placeholders.
+        # frame() places the camera for the default position; _apply_clip() sets the planes. The
+        # projection calls give no planes, so that frame() does not keep earlier ones.
         if orthographic:
-            camera.set_orthographic(height=1.0, near=0.1, far=1.0)
+            camera.set_orthographic(height=1.0)
         else:
-            camera.set_perspective(fov_y=get("fov"), near=0.1, far=1.0)
+            camera.set_perspective(fov_y_deg=get("fov"))
         camera.frame(self._frame_box, fill=get("fill"), direction=(0, 0, -1), aspect=self._aspect)
         position = np.asarray(camera.position, dtype=float)
         if get("camPos") is not None:
@@ -804,7 +820,7 @@ class SceneStim(MinimalStim, _Settings):
         if self._projection == "orthographic":
             self.camera.set_orthographic(height=self._view_height, near=near, far=far)
         else:
-            self.camera.set_perspective(fov_y=get("fov"), near=near, far=far)
+            self.camera.set_perspective(fov_y_deg=get("fov"), near=near, far=far)
 
     def _apply(self):
         dirty, get = self._dirty, self._get
@@ -818,9 +834,9 @@ class SceneStim(MinimalStim, _Settings):
             self.light.direction = get("lightDir")
             self.light.intensity = get("lightIntensity")
             self.light.color = get("lightColor")[:3]
-        if "environment" in dirty and self._has_environment:
+        if "environment" in dirty:
             self._scene.environment_intensity = get("envIntensity")
-            self._scene.environment_rotation = get("envRotation")
+            self._scene.environment_rotation_deg = get("envRotation")
         if "background" in dirty:
             background = get("backgroundColor")
             # Transparent output composites the models over the window and the stimuli drawn
@@ -851,7 +867,7 @@ class SceneStim(MinimalStim, _Settings):
         self._image.draw(win)
 
     def close(self):
-        """Release the models, the target, and the scene. Repeated calls are valid."""
+        """Release the models, the target, the scene, and the camera. Repeated calls are valid."""
         if self._closed:
             return
         self._closed = True
@@ -862,6 +878,7 @@ class SceneStim(MinimalStim, _Settings):
                 model.close()
             self._target.close()
             self._scene.close()
+            self.camera.close()  # renderer cameras outlive their scene
         finally:
             self._image = None
             if self in self._host.stims:
@@ -1007,7 +1024,7 @@ class SceneModel(_Settings):
             from filly.samples import SUZANNE
             model = SUZANNE
         scene = self.scene
-        loaded = (scene._host.model_cache.instance(model, scene._scene, scene._refraction) if cached
+        loaded = (scene._host.model_cache.instance(model, scene._scene) if cached
                   else scene._scene.load(str(model)))
         try:
             bounds = np.asarray(loaded.bounds, dtype=float)
@@ -1068,9 +1085,10 @@ class SceneModel(_Settings):
         The call returns after the shaders are compiled and the textures are on the GPU, so the
         first frame that shows the model does not wait for them. Load in a static period
         (Builder: "set during") or at the routine start to keep this out of the trial's frames.
-        Handles to the old model are closed. A file that a scene of the window showed before is
-        a clone of its first load, which is much faster for large files: see
-        MODEL_CACHE_MAX_BYTES.
+        Handles to the old model are closed. A file that an earlier setModel() of the window
+        loaded, and that the cache kept, is a new model of its kept asset, which is much faster
+        for large files: see MODEL_CACHE_MAX_BYTES. The model given at creation loads with
+        Scene.load() and is not cached.
         """
         self._check_open()
         if self._state.get("model") == str(model):
