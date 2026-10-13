@@ -208,7 +208,9 @@ def add_mouse(exp, clickable="cube", end="valid click", save="final"):
 def compile_script(exp, **kwargs):
     """Compile to a PsychoPy script with the build date removed, so output is reproducible."""
     script = exp.writeScript(target="PsychoPy", **kwargs)
-    return re.sub(r"on \w+ \d+, \d{4}, at \d\d:\d\d", "on <date>", script)
+    # The date format follows the platform's locale: "October 13, 2026, at 19:42" on Windows,
+    # "Tue Oct 13 19:42:39 2026" on Linux.
+    return re.sub(r"(Experiment Builder \(v[^)]*\),\n\s*on ).*", r"\g<1><date>", script, count=1)
 
 
 def compile_js(exp, folder, duration=None):
