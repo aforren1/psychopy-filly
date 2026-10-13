@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psychopy-filly"
-version = "0.0.1.dev0"
+version = "0.1.0"
 description = "PsychoPy Builder components that show 3D glTF models rendered with filly"
 readme = "README.md"
 # filly needs Python 3.10 or later. PsychoPy's own Python limits are PsychoPy's to declare.
