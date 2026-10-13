@@ -2,16 +2,16 @@
  "source": "filly tools/build_filly_web.sh",
  "files": {
   "filly.js": {
-   "bytes": 41281,
-   "sha256": "c2fb17c56fd464fbac45e0a54c88b3d56e7e5e87a835cd0e269b1f016d12efad"
+   "bytes": 43065,
+   "sha256": "eaef569118922ac99243bc9e8ca7ba105f7a6ee964fb1824245aa98a7b923b80"
   },
   "filly-core.js": {
-   "bytes": 141990,
-   "sha256": "f0c5e2a1089e34741c953eb1c2d1ed8167dc599854f9af63a3e5225ce5b80f44"
+   "bytes": 142865,
+   "sha256": "41ae6b177a2e9e85577db8e3b22b0c42a82637902a4167148958ef623f6553c7"
   },
   "filly-core.wasm": {
-   "bytes": 3595734,
-   "sha256": "0ac5eff2c41490dccb97b6da1b04e16b7d6f939638059e272c4b74fae5f59cce"
+   "bytes": 3605881,
+   "sha256": "e7b28dca6293003c9216f7ef1e27130a8b701cddbf4c2ac7dd18a8e6465d8d7b"
   }
  }
 }

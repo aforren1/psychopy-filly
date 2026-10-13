@@ -16,6 +16,9 @@
 //   evaluate    the body of an async function of (runtime, scene, model): the runtime module, and
 //               the first scene and its first model. It runs when the 3D scenes are ready, before
 //               the screenshots; its JSON result is result.evaluate.
+//   click       [x, y] page pixels: after evaluate, rest the pointer there, click, wait 2 s, and
+//               report the first scene's lastPick, the open scenes, and the last trial's
+//               mouse.clicked_name (result.click)
 // The server sends no other headers, as a plain static host.
 import fs from "node:fs";
 import http from "node:http";
@@ -109,6 +112,35 @@ try
 				const run = new Function("runtime", "scene", "model", `return (async () => { ${body} })();`);
 				return await run(runtime, scene, scene.models[0]);
 			}, config.evaluate);
+		}
+		if (config.click)
+		{
+			// A participant's click: the pointer rests on the point, then the left button goes
+			// down and up. The page keeps the first scene, which closes when the experiment ends.
+			await page.evaluate(async () =>
+			{
+				const runtime = await import(new URL("filly/filly-psychojs.js", location.href).href);
+				[window.clickScene] = await runtime.stimuli();
+			});
+			const [x, y] = config.click;
+			await page.mouse.move(x, y);
+			await sleep(400);
+			await page.mouse.down();
+			await sleep(150);
+			await page.mouse.up();
+			await sleep(2000);
+			result.click = await page.evaluate(async () =>
+			{
+				const runtime = await import(new URL("filly/filly-psychojs.js", location.href).href);
+				const scene = window.clickScene;
+				const pick = scene.lastPick;
+				const hit = pick?.result ?? null;
+				const trials = scene.psychoJS.experiment._trialsData;
+				return { open: (await runtime.stimuli()).length, pixel: pick?.pixel ?? null, frame: pick?.frame ?? null,
+					flipTime: pick?.flipTime ?? null,
+					hit: hit && { modelName: hit.modelName, node: hit.node, nodeIndex: hit.nodeIndex, point: hit.point, depth: hit.depth },
+					clickedName: trials.length ? trials[trials.length - 1]["mouse.clicked_name"] ?? null : null };
+			});
 		}
 		const start = Date.now();
 		for (const [index, seconds] of (config.screenshots ?? []).entries())

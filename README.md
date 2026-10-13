@@ -160,6 +160,109 @@ back. Thus, online, the limit sets the highest memory use of the cache, not its 
 The experiment loads these files from its own server. Thus a page with cross-origin isolation
 headers (COOP and COEP) can load them too; see [cross-origin isolation](#cross-origin-isolation).
 
+### Select models with the mouse
+
+A Mouse component can use 3D Models and 3D Scenes as clickable stimuli. A click is on a model
+when the image that the window showed has that model in front at the click point: not its
+bounding box. Cut-out (mask) regions and blended materials let the click pass to what is
+behind. The background, the environment, and hidden models are no hits.
+
+1. Add a Mouse component to the routine, below the 3D Scene and 3D Model components.
+2. In **Clickable stimuli**, type the names of the 3D Model components, for example
+   `cube, sphere`. The name of a 3D Scene accepts a click on any of its models.
+3. To end the routine on a click on a model, set **End Routine on press** to **valid click**.
+4. Keep `name` in **Store params for clicked**. The data then has `mouse.clicked_name`.
+
+The 3D Scene keeps the result of the last check as `lastPick`, a pick with these attributes:
+
+| Attribute | Meaning |
+| --- | --- |
+| `result.model`, `result.modelName` | The 3D Model that was hit, and its component name. `result` is `None` (`null` online) where no model was hit |
+| `result.node`, `result.nodeIndex` | Name and glTF index of the node that carries the mesh |
+| `result.point` | World position of the surface at the click point, in scene units |
+| `result.depth` | Distance from the camera to `point` along the camera's viewing direction |
+| `frame` | filly's frame number of the render that answered |
+| `flipTime` | Time of the window flip that first showed the image that the pick describes, on the clock of the log file |
+
+To save these values, add a Code component below the Mouse component. In **End Routine**,
+Python:
+
+```python
+pick = scene.lastPick
+hit = pick.result if pick is not None else None
+thisExp.addData('pick.model', hit.modelName if hit else None)
+thisExp.addData('pick.node', hit.node if hit else None)
+thisExp.addData('pick.point', list(hit.point) if hit else None)
+thisExp.addData('pick.depth', hit.depth if hit else None)
+thisExp.addData('pick.frame', pick.frame if pick is not None else None)
+thisExp.addData('pick.flipTime', pick.flipTime if pick is not None else None)
+```
+
+JavaScript (set the Code component's type to **Both**):
+
+```javascript
+const pick = scene.lastPick;
+const hit = pick ? pick.result : null;
+psychoJS.experiment.addData('pick.model', hit ? hit.modelName : null);
+psychoJS.experiment.addData('pick.node', hit ? hit.node : null);
+psychoJS.experiment.addData('pick.point', hit ? hit.point : null);
+psychoJS.experiment.addData('pick.depth', hit ? hit.depth : null);
+psychoJS.experiment.addData('pick.frame', pick ? pick.frame : null);
+psychoJS.experiment.addData('pick.flipTime', pick ? pick.flipTime : null);
+```
+
+To find the model at a point without a Mouse component, for example at each frame, call
+`scene.pick(pos)` with a position in the window's units, such as `mouse.getPos()`. It returns
+a pick at once. Its answer arrives some frames later: call `ready()` once per frame, and read
+`result` when `ready()` returns true.
+
+#### Moving models
+
+A pick describes the image that the window showed when the code ran: the scene as it was last
+rendered. Changes that the routine makes in the same frame apply after the pick. Thus a click
+on a moving model counts where the participant saw the model. Log `flipTime` to know when that
+image appeared. Online, the answer describes an image of a few frames before the click (see
+below).
+
+#### Timing
+
+Local experiments:
+
+- A check renders the shown image again with a pick query and waits for the GPU. This happens
+  only for a click inside the scene's image; other frames render nothing for picks. Measured on
+  the test laptop with a full-screen 1920 x 1080 scene, one check per 30 frames:
+
+  | Scene | Intel Iris Xe | NVIDIA RTX A500 |
+  | --- | --- | --- |
+  | Lit cube | 6 to 8 ms | 1.3 to 2.8 ms |
+  | ChronographWatch | 12 to 15 ms | 2 to 9 ms |
+
+- If the scene also changes in the click frame, as a moving model does, that frame renders a
+  second time for the new image. With the watch on Intel Iris Xe, such click frames took 27 to
+  29 ms: one frame was dropped. With the cube, the median click-frame interval was 18 to 21 ms.
+  NVIDIA dropped no frames.
+- The first pick of a renderer costs some GPU drivers a one-time delay (45 to 100 ms on Intel
+  Iris Xe). A window pays it during setup instead (60 to 75 ms on Intel Iris Xe) when one of
+  its 3D Scenes picks: a Mouse component lists the scene or one of its models, a Code
+  component calls `pick()`, `contains()`, `isPressedIn()`, or `lastPick` on them, or the
+  scene's **Mouse picking** checkbox is on. Code that reaches the objects another way, for
+  example through a list, is not found: turn on **Mouse picking** for it, or the first click
+  is slow. Like PsychoPy's **Draggable?**, the checkbox is on the **Layout** tab.
+
+Online experiments:
+
+- The browser gives the answer of a pick 2 or 3 frames after the render, and the Mouse component
+  needs it in the frame of the click. Thus the scene picks the pointer position after each frame
+  in which the pointer moved over the scene or the image changed. The compile turns this on when
+  a Mouse component names the scene or one of its models; in code, set
+  `scene.trackPointer = true`. A check then uses the answer for the click pixel, which describes
+  an image of a few frames before the click.
+- If no answer is there for the click pixel, the check returns false and starts a pick. This
+  happens when the click comes less than 3 frames after the pointer arrived, for example on a
+  touch screen. For such devices, use `scene.pick()` and a Code component instead.
+- Each tracked frame renders a pick query. When the scene renders in that frame anyway, the
+  query only adds Filament's depth pass for picking; otherwise the scene renders once more.
+
 ## Parameters
 
 Each parameter that can change during the experiment has the update modes **constant**,
@@ -175,6 +278,7 @@ image, as for an image stimulus; they need no new render.
 | --- | --- | --- | --- | --- |
 | Layout | Render size [w,h] | initial size | constant | Pixels of the rendered image. Set it if the size changes during the experiment |
 | Layout | Render scale | 1 | constant | Factor for the automatic render size, in (0, 2]. Below 1 is faster for expensive scenes but stretches the image bilinearly, which blurs edges and fine detail. Not used with a render size |
+| Layout | Mouse picking | off | constant | Prepare the window for clicks on the scene's models at the start, so that the first click is not slow. On automatically when a Mouse component or a Code component picks with the scene; see [timing](#select-models-with-the-mouse) |
 | Camera | Projection | perspective | constant | perspective or orthographic |
 | Camera | Field of view (deg) | 30 | every frame | Vertical field of view of the perspective projection |
 | Camera | View height | from framing | every frame | Height of the orthographic view in scene units |

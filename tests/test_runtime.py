@@ -733,3 +733,119 @@ def test_render_scale(window, cube_path):
     assert (sized._target.width, sized._target.height) == (64, 32)
     with pytest.raises(ValueError, match="renderScale"):
         runtime.SceneStim(window, size=(200, 100), renderScale=0)
+
+
+# --- picking ---------------------------------------------------------------------------------
+
+def test_pick_pixel_follows_placement_units_and_render_scale(cube_path):
+    from psychopy import visual
+    from psychopy_filly import runtime
+
+    win = visual.Window(size=(400, 300), units="height", winType="pyglet", useFBO=False, checkTiming=False)
+    try:
+        scene = runtime.SceneStim(win, pos=(0.1, -0.05), size=(0.4, 0.3), ori=30, renderScale=0.5)
+        assert (scene._width, scene._height) == (60, 45)
+        assert scene._pixel((0.1, -0.05), "height") == pytest.approx((30, 22.5))
+        # A point on the image's x axis, which ori turns clockwise.
+        angle = math.radians(30)
+        point = (0.1 + 0.1 * math.cos(angle), -0.05 - 0.1 * math.sin(angle))
+        assert scene._pixel(point, "height") == pytest.approx((45, 22.5))
+        assert scene._pixel([v * 300 for v in point], "pix") == pytest.approx((45, 22.5))
+        assert scene._pixel((point[0] * 300 / 200, point[1] * 2), "norm") == pytest.approx((45, 22.5))
+        assert scene._pixel((0.4, 0), "height") is None
+        scene.setSize((-0.4, 0.3))  # mirrored
+        assert scene._pixel(point, "height") == pytest.approx((15, 22.5))
+        runtime.close_all()
+    finally:
+        win.close()
+
+
+def test_contains_and_pick_results(window, cube_path):
+    from psychopy import event
+
+    scene, cube = _create(window, cube_path, size=(200, 200))
+    renderer = scene._host.renderer
+    frames = lambda: renderer.stats.frames_rendered  # noqa: E731
+    # Before the window shows the scene, there is nothing to hit, and nothing renders.
+    before = frames()
+    assert not cube.contains((0, 0)) and frames() == before
+    _show(window, scene)
+    shown = frames()
+    # One render answers every clickable stimulus of the scene at the same point.
+    assert cube.contains((0, 0)) and scene.contains((0, 0)) and cube.contains(0, 0)
+    assert frames() == shown + 1
+    pick = scene.lastPick
+    hit = pick.result
+    assert hit.model is cube and hit.modelName == "model" and hit.node == "cube" and hit.nodeIndex == 0
+    # The front face of the unit cube, at the center of the view, faces the camera on +Z.
+    assert hit.point == pytest.approx((0, 0, 0.5), abs=0.02) and hit.depth > 1
+    assert pick.frame == shown + 1 and isinstance(pick.flipTime, float)
+    assert repr(pick).startswith("<ScenePick") and "SceneHit model" in repr(pick)
+    # A corner of the image shows the background; outside the image there is no render.
+    assert not cube.contains((90, 90)) and scene.lastPick.result is None
+    after = frames()
+    assert not scene.contains((150, 0)) and frames() == after and scene.lastPick.pixel is None
+    # A Mouse, as the Mouse component and isPressedIn() pass it.
+    mouse = event.Mouse(win=window)
+    mouse.getPos = lambda: np.array([3.0, -2.0])
+    mouse.getPressed = lambda *args, **kwargs: [1, 0, 0]
+    assert cube.contains(mouse) and mouse.isPressedIn(cube) and mouse.isPressedIn(scene, buttons=[0])
+    with pytest.raises(RuntimeError, match="no answer yet"):
+        scene.pick((0, 0)).result
+
+
+def test_pick_answers_without_more_draws(window, cube_path):
+    """A static scene renders nothing after the pick, and the answer still arrives."""
+    scene, cube = _create(window, cube_path, size=(200, 200))
+    _show(window, scene)
+    renderer = scene._host.renderer
+    pick = scene.pick((10, 5))
+    frames = renderer.stats.frames_rendered
+    for flips in range(1, 11):
+        scene.draw()
+        window.flip()
+        if pick.ready():
+            break
+    assert flips <= 4 and renderer.stats.frames_rendered == frames
+    assert pick.result.model is cube and pick.pixel == pytest.approx((110, 105))
+
+
+def test_pick_describes_the_shown_image(window, cube_path):
+    """Settings changed after the last draw do not apply to a pick: the participant saw the
+    image of that draw."""
+    scene, cube = _create(window, cube_path, size=(200, 200))
+    _show(window, scene)
+    cube.setModelPos((2, 0, 0))  # out of the view at the next draw
+    assert cube.contains((0, 0))
+    _show(window, scene)
+    assert not cube.contains((0, 0))
+
+
+def _run_click(tmp_path, where):
+    script = tmp_path / "filly_cube.py"
+    experiment = builder_helpers.build_experiment(duration=4.0, fill=0.5)
+    builder_helpers.add_mouse(experiment)
+    script.write_text(builder_helpers.compile_script(experiment), encoding="utf-8")
+    builder_helpers.write_cube(tmp_path / "cube.glb")
+    env = dict(os.environ, CLICK_AT="30", CLICK_POS=where)
+    result = subprocess.run(
+        [sys.executable, "-W", "default", str(TESTS / "run_with_capture.py"), str(script),
+         str(tmp_path / "capture")], capture_output=True, text=True, timeout=120, env=env)
+    assert result.returncode == 0, result.stderr[-3000:]
+    assert "Traceback" not in result.stderr
+    flips = json.loads((tmp_path / "capture" / "events.json").read_text())["flips"]
+    data = next((tmp_path / "data").glob("*.csv")).read_text()
+    return flips, data
+
+
+@pytest.mark.parametrize("where, valid", [("0,0", True), ("0.25,0.25", False)])
+def test_compiled_mouse_click_on_model(tmp_path, where, valid):
+    """A Mouse component lists the model as a clickable stimulus and ends the routine on a valid
+    click: a click on the model ends it, a click on the scene's background does not."""
+    flips, data = _run_click(tmp_path, where)
+    header, row = data.splitlines()[:2]
+    clicked = dict(zip(header.split(","), row.split(",")))["mouse.clicked_name"]
+    if valid:
+        assert flips <= 32 and clicked == "cube"
+    else:
+        assert flips > 200 and clicked in ("", "None")

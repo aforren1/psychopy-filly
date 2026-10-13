@@ -3,7 +3,9 @@
 Usage: python run_with_capture.py SCRIPT OUT_DIR FRAME [FRAME ...]
 
 If the environment variable ESCAPE_AT is set to a flip count, the default keyboard reports
-Escape from that flip on, as if the participant pressed it.
+Escape from that flip on, as if the participant pressed it. With CLICK_AT (a flip count) and
+CLICK_POS ("x,y" in window units), the mouse sits at CLICK_POS and the left button is down for
+5 flips from flip CLICK_AT on.
 
 Writes OUT_DIR/frame_<n>.png for each requested flip count (back buffer before the flip) and
 OUT_DIR/events.json with the close events in order. The script runs as __main__, so it ends
@@ -84,6 +86,20 @@ def main():
             return keys
 
         keyboard.KeyboardDevice.getKeys = escape_keys
+
+    click_at = int(os.environ.get("CLICK_AT", "0"))
+    if click_at:
+        # The mouse sits at CLICK_POS (window units) and presses the left button for 5 flips
+        # from flip CLICK_AT on, as a participant's click.
+        import numpy as np
+        from psychopy import event
+        click_pos = np.array([float(v) for v in os.environ["CLICK_POS"].split(",")])
+
+        def pressed(self, *args, **kwargs):
+            return [1, 0, 0] if click_at <= counter["n"] < click_at + 5 else [0, 0, 0]
+
+        event.Mouse.getPressed = pressed
+        event.Mouse.getPos = lambda self: click_pos.copy()
 
     visual.Window.flip = capture_flip
     runtime.SceneStim.draw = capturing_draw

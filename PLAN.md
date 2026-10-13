@@ -189,6 +189,54 @@ fails at compile time. Decisions:
 
 The parameter tables are in the README.
 
+### Object picking (since 2026-10-13)
+
+Selection tasks use filly's picking (`Renderer.pick()`): which model surface the image shows at
+a point. Status: built and tested locally and in Chrome, Edge, and Firefox; not run on Pavlovia.
+Decisions:
+
+- No new component parameters. `SceneModel.contains()` and `SceneStim.contains()` take the
+  arguments of PsychoPy's `contains()` (a Mouse, a point, or x and y), so a Mouse component's
+  **Clickable stimuli** and **Correct answer** can name 3D Models and 3D Scenes, and
+  `Mouse.isPressedIn()` works. PsychoPy 2024.2.4 and 2026.2.4 resolve the names to the
+  component objects (`environmenttools.getFromNames()` with `locals()`; PsychoJS `eval()`), call
+  `obj.contains(mouse)` once in the frame of a new press, and store `obj.name`.
+- `SceneStim.pick(pos, units=None)` maps a position (default: the window's units) to a target
+  pixel: subtract the image position, turn back by `ori` (PsychoPy turns clockwise), divide by
+  the signed size, and multiply by the target size, which includes the render scale (and
+  `devicePixelRatio` online). A point outside the image is a miss without a query. It returns a
+  `ScenePick` (`ready()`, `result`, `frame`, `flipTime`); `result` is a `SceneHit` (model,
+  model name, node name and index, world point, depth) or None.
+- A pick describes the image that the window shows: the scene as last rendered for display.
+  The setters only store values and the next draw applies them, so the filly scene still holds
+  that state. The pick renders it again with the query. For a moving model, a click thus counts
+  where the participant saw the model, at the cost of a second render in click frames in which
+  the scene also changed. The alternative, picking the next render, renders once but describes
+  an image that the participant saw only after the click.
+- Locally, `contains()` renders, waits with `renderer.finish()`, and answers at once. The models
+  of one clickable list share that render: the scene keeps the answer for the same pixel and
+  image. `lastPick` keeps it for logging. Frames without a click inside the image do no picking
+  work; each rendered frame registers one `win.timeOnFlip()` for `flipTime`.
+- Online, WebGL answers only 2 or 3 frames after the render, so `contains()` cannot wait. It
+  returns the answer of the latest pick at the same pixel whose image is at most 4 renders
+  older than the shown one, or false and starts a pick. To have an answer at the click,
+  `trackPointer` picks the pointer position after each flip in which it moved or the image
+  changed, with the frame's own render when there is one. The compile sets it when a Mouse
+  component names the scene or one of its models. Touch taps and clicks less than 3 frames
+  after the pointer arrives get no answer; the README says to use `pick()` and a Code component
+  for them. Rejected: re-arming the Mouse component's press detection (its `prevButtonState` is
+  a module variable of the generated script) and waiting for the answer (WebGL signals fences
+  only between tasks).
+- filly support (2026-10-13): `prepare()` renders a hidden pick once per renderer, so the
+  Python host prepares an empty scene on the direct output path (60 to 75 ms on Intel Iris Xe)
+  when a scene expects picks: `SceneStim(picking=True)`, which the compile writes for the
+  **Mouse picking** checkbox (modeled on PsychoPy's **Draggable?**), a Mouse component that
+  lists the scene or its models, or a Code component that calls their picking methods (a text
+  search); `PickQuery.ready()` begins an empty frame when nothing rendered since the
+  query, so that the answer of a static scene arrives.
+- No pick tolerance: a ring of extra queries would cost 0.1 to 0.2 ms of GPU time per query in
+  every click frame, and it would complicate the online answer lookup. Add it if users ask.
+
 ### Generated code (local)
 
 Phase 0 generates this code (see `tests/data/filly_cube.py`):
@@ -448,7 +496,12 @@ Instead:
   filly, cross-origin isolation, Escape, a `.gltf` with an external buffer, the upload check,
   an opacity ramp (one sprite, no added PIXI listeners), a scene hidden past PIXI's texture
   garbage collection, A/B/A/B model changes through the cache, a model too large for the cache,
-  two models in one scene, the render scale, and two scenes that share one environment.
+  two models in one scene, the render scale, two scenes that share one environment, and a
+  Mouse component click on a model and on the background.
+- **Picking.** `tests/test_picking.py` checks the point-to-pixel mapping in Python and in the
+  PsychoJS runtime; `tests/test_runtime.py` checks `contains()`, `pick()`, the units and render
+  scale, the shown-image rule, and a compiled experiment whose Mouse component ends the routine
+  on a click on the model and not on the background.
 
 ## Risks and open questions
 
@@ -465,4 +518,6 @@ Instead:
 | WebGL1 on Android and other non-Apple mobile devices | The component stops with a message | Set PIXI's `PREFER_ENV` before the window opens, if PsychoJS allows it; test on devices |
 | Frames during stimulus creation take up to 150 ms (Chrome, Edge) or 283 ms (Firefox) | Measured on 2026-10-03 after frame yields, the uniform environment, and `prepare()` | Split the remaining steps; give transparent scenes an alpha swap chain so that Filament needs no blit; wait for Firefox to support `KHR_parallel_shader_compile` |
 | A run on Pavlovia | Not done | Sync a test experiment |
+| Online `contains()` has no answer for touch taps and quick clicks | By design: WebGL answers picks frames later (2026-10-13) | Use `pick()` in a Code component; or a synchronous pick in filly's web build, if one becomes possible |
+| Local click frames render twice when the scene changes in the same frame (one dropped frame with a heavy scene on Intel Iris Xe) | Measured on 2026-10-13 | A pick-only render (depth pass) in filly would cost less |
 | Rare crash of filly's desktop test suite when browsers use the same GPU at the same time | Seen once on 2026-10-03 | Track with filly's open concurrent-context crash |

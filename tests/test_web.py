@@ -391,3 +391,26 @@ def test_scenes_share_environment(tmp_path, node, psychojs_lib):
                  open: !(await scene._host.environments.get("uniform")).closed };
     """)
     assert report["evaluate"] == {"shared": True, "environments": 1, "open": True}
+
+
+@pytest.mark.parametrize("browser", BROWSERS)
+@pytest.mark.parametrize("where", ["model", "background"])
+def test_mouse_click_on_model(tmp_path, node, psychojs_lib, browser, where):
+    """A Mouse component lists the model as a clickable stimulus and ends the routine on a valid
+    click. The scene tracks the pointer, so contains() has an answer when the click arrives."""
+    builder_helpers.write_cube(tmp_path / "cube.glb")
+    experiment = builder_helpers.build_experiment(duration=10.0, fill=0.5)
+    builder_helpers.add_mouse(experiment)
+    builder_helpers.compile_js(experiment, tmp_path, duration=10.0)
+    shutil.copytree(psychojs_lib, tmp_path / "lib", dirs_exist_ok=True)
+    # The page is 1000 x 700 pixels and the window units are "height": the scene spans 0.6 * 700
+    # pixels about the center, and the rotating cube about half of that.
+    point = [500, 350] if where == "model" else [500 + 0.25 * 700, 350 - 0.25 * 700]
+    click = _run(node, tmp_path, browser, click=point)["click"]
+    if where == "model":
+        # The valid click ended the routine, and with it the experiment, which closed the scene.
+        assert click["open"] == 0 and click["clickedName"] == "cube"
+        assert click["hit"]["modelName"] == "cube" and click["hit"]["node"] == "cube"
+        assert click["hit"]["depth"] > 0 and isinstance(click["frame"], int) and click["flipTime"] > 0
+    else:
+        assert click["open"] == 1 and click["hit"] is None

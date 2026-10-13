@@ -191,6 +191,20 @@ def build_experiment(model="cube.glb", duration=3.0, win_size=(800, 600), blend_
     return exp
 
 
+def add_mouse(exp, clickable="cube", end="valid click", save="final"):
+    """Add a Mouse component named "mouse" below the 3D components of the experiment's routine:
+    `clickable` names its clickable stimuli, and `end` ends the routine on that kind of click."""
+    from psychopy.experiment.components.mouse import MouseComponent
+
+    routine = exp.routines["trial"]
+    stop = next(c for c in routine if c.name == "scene").params["stopVal"].val
+    mouse = MouseComponent(exp, "trial", name="mouse", startVal=0.0, stopVal=stop, save=save,
+                           forceEndRoutineOnPress=end)
+    mouse.params["clickable"].val = clickable
+    routine.addComponent(mouse)
+    return mouse
+
+
 def compile_script(exp, **kwargs):
     """Compile to a PsychoPy script with the build date removed, so output is reproducible."""
     script = exp.writeScript(target="PsychoPy", **kwargs)

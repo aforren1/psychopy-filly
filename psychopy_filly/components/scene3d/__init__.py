@@ -3,6 +3,7 @@
 3D Model components add models to it. See _common.py: this module must not import filly.
 """
 
+import re
 from pathlib import Path
 
 from psychopy.experiment.components import BaseVisualComponent, getInitVals
@@ -78,6 +79,13 @@ SCENE_PARAMS = [
      "Multisample antialiasing"),
     ("shadows", False, "bool", "bool", "Rendering", [], None, "Shadows",
      "Shadows from the directional light"),
+    # Like PsychoPy's "Draggable?": a checkbox that the stimulus constructor takes. Picking works
+    # without it; it only moves a one-time driver cost from the first click to the start.
+    ("picking", False, "bool", "bool", "Layout", [], None, "Mouse picking",
+     "Prepare the window for clicks on this scene's models when the experiment starts, so that "
+     "the first click is not slow (about 60 ms on Intel graphics). On automatically when a Mouse "
+     "component lists the scene or its models, or a Code component calls pick(), contains(), "
+     "isPressedIn(), or lastPick on them; turn it on for other code"),
     # Text, not a number, so that "unlimited" compiles to a string in both targets.
     ("modelCacheMiB", "", "str", "single", "Rendering", [], None, "Model cache (MiB)",
      "Memory limit of the window's cache of model files that changed per trial. Blank: the "
@@ -85,6 +93,10 @@ SCENE_PARAMS = [
      "Scene in a window that sets this decides"),
 ]
 
+
+# Calls that answer a click in the frame of the click. Online they need the pointer picks that
+# trackPointer starts before the click.
+_ANSWERS_AT_ONCE = ("contains", "isPressedIn")
 
 class Scene3DComponent(BaseVisualComponent):
     """Show a 3D scene rendered by filly. 3D Model components add models to it."""
@@ -126,9 +138,10 @@ class Scene3DComponent(BaseVisualComponent):
         self.params["colorSpace"].hint = _translate("Color space of the light and background colors")
 
     def _arguments(self, inits, python):
+        # "picking" is written by writeInitCode, which also turns it on when the experiment picks.
         return "".join(
             (f"    {key}={inits[key]},\n" if python else f"  {key}: {inits[key]},\n")
-            for key, *_ in SCENE_PARAMS if writes(self, SCENE_PARAMS, key))
+            for key, *_ in SCENE_PARAMS if key != "picking" and writes(self, SCENE_PARAMS, key))
 
     def writeInitCode(self, buff):
         inits = getInitVals(self.params, "PsychoPy")
@@ -138,10 +151,13 @@ class Scene3DComponent(BaseVisualComponent):
             "    pos={pos}, size={size}, units={units}, ori={ori}, opacity={opacity},\n"
             "    colorSpace={colorSpace},\n"
             "{arguments}"
+            "{picking}"
             "    depth={depth:.1f})\n"
         ).format(name=inits["name"], pos=inits["pos"], size=inits["size"], units=inits["units"],
                  ori=inits["ori"], opacity=inits["opacity"], colorSpace=inits["colorSpace"],
-                 arguments=self._arguments(inits, True), depth=-self.getPosInRoutine())
+                 arguments=self._arguments(inits, True),
+                 picking="    picking=True,\n" if self._picks() else "",
+                 depth=-self.getPosInRoutine())
         buff.writeIndentedLines(code)
 
     def writeExperimentEndCode(self, buff):
@@ -156,12 +172,59 @@ class Scene3DComponent(BaseVisualComponent):
             "  pos: {pos}, size: {size}, units: {units}, ori: {ori}, opacity: {opacity},\n"
             "  colorSpace: {colorSpace},\n"
             "{arguments}"
+            "{track}"
             "  depth: {depth:.1f}\n"
             "}});\n"
         ).format(name=inits["name"], pos=inits["pos"], size=inits["size"], units=inits["units"],
                  ori=inits["ori"], opacity=inits["opacity"], colorSpace=inits["colorSpace"],
-                 arguments=self._arguments(inits, False), depth=-self.getPosInRoutine())
+                 arguments=self._arguments(inits, False),
+                 track=("  trackPointer: true,\n"
+                        if self._clicked() or self._code_calls(_ANSWERS_AT_ONCE) else ""),
+                 depth=-self.getPosInRoutine())
         buff.writeIndentedLines(JS_RUNTIME + code)
+
+    def _components(self):
+        return [component for routine in self.exp.routines.values() for component in routine]
+
+    def _own_names(self):
+        """This scene's name and the names of its 3D Model components."""
+        name = self.params["name"].val
+        return {name} | {component.params["name"].val for component in self._components()
+                         if getattr(component, "type", None) == "Model3D" and component._scene_name() == name}
+
+    def _clicked(self):
+        """Whether a Mouse component lists this scene or one of its models as a clickable stimulus
+        or a correct answer. Online, contains() answers a click only from picks of the pointer
+        position that started before it (see trackPointer in filly-psychojs.js)."""
+        own = self._own_names()
+        for component in self._components():
+            if getattr(component, "type", None) != "Mouse":
+                continue
+            for key in ("clickable", "correctAns"):
+                if key in component.params and own & set(re.findall(r"\w+", str(component.params[key].val))):
+                    return True
+        return False
+
+    def _code_calls(self, methods):
+        """Whether a Code component calls one of `methods` on this scene or one of its models, as
+        `name.method` or `mouse.isPressedIn(name)`. A text search: code that reaches the objects
+        another way is not found, and only pays the first pick's cost then."""
+        own = "|".join(re.escape(name) for name in sorted(self._own_names()))
+        calls = "|".join(methods)
+        pattern = re.compile(rf"\b(?:{own})\s*\.\s*(?:{calls})\b"
+                             + (rf"|\bisPressedIn\s*\(\s*(?:{own})\b" if "isPressedIn" in methods else ""))
+        for component in self._components():
+            if getattr(component, "type", None) != "Code":
+                continue
+            if any(pattern.search(str(param.val)) for param in component.params.values()):
+                return True
+        return False
+
+    def _picks(self):
+        """Whether the window prepares picking at start: the "Mouse picking" checkbox, or a Mouse
+        or Code component that picks with this scene."""
+        return (str(self.params["picking"].val).lower() == "true" or self._clicked()
+                or self._code_calls(_ANSWERS_AT_ONCE + ("pick", "lastPick")))
 
     def writeExperimentEndCodeJS(self, buff):
         write_close_code_js(buff)

@@ -14,6 +14,7 @@ import atexit
 import collections
 import math
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -21,12 +22,13 @@ import numpy as np
 from psychopy import logging
 from psychopy import __version__ as psychopy_version
 from psychopy.colors import Color
-from psychopy.layout import Size
+from psychopy.layout import Position, Size
 from psychopy.visual.basevisual import MinimalStim
 
 from . import gltf_info
 
-__all__ = ["SceneStim", "SceneModel", "close_all", "TESTED_PSYCHOPY", "DEFAULT_MODEL"]
+__all__ = ["SceneStim", "SceneModel", "ScenePick", "SceneHit", "close_all", "TESTED_PSYCHOPY",
+           "DEFAULT_MODEL"]
 
 # The 3D Model component's default model, filly's sample Suzanne. A file of this name in the working
 # directory takes precedence.
@@ -82,6 +84,24 @@ class _Host:
         self.transparent_ready = False  # whether a transparent scene has rendered
         self.model_cache = _ModelCache(self.renderer)
         self._environments = {}  # key: filly Environment that the window's scenes share
+        self._picking_prepared = False
+
+    def prepare_picking(self):
+        # The first pick of a renderer cost the Intel Iris Xe driver 45 to 100 ms, in the frame of
+        # the first click. filly's prepare() pays it once per renderer, in a hidden frame. That
+        # costs 60 to 75 ms at startup, so only scenes that expect picks ask for it. An empty
+        # scene on the direct output path gives prepare() nothing else to compile.
+        if self._picking_prepared:
+            return
+        self._picking_prepared = True
+        scene = self.renderer.create_scene()
+        try:
+            scene.output_path = "direct"
+            preparation = self.renderer.prepare(scene)
+            while not preparation.ready():
+                time.sleep(0.001)
+        finally:
+            scene.close()
 
     def environment(self, path=None):
         """Return the window's Environment of a panorama or KTX file, or with None the uniform one.
@@ -399,6 +419,136 @@ class _ModelCache:
             asset.close()
 
 
+# --- picking -----------------------------------------------------------------------------------
+
+# Filament reads picks from a buffer of at least 32 x 32 texels (filly: Renderer.pick()).
+_PICK_MINIMUM = 32
+
+
+def _target_pixel(point, center, size, ori, width, height):
+    """Map a window point to a pixel of a scene's render target; None outside the image.
+
+    `point`, `center` (the image position), and `size` (signed: a negative size flips the image)
+    are window pixels, y up. PsychoPy turns stimuli clockwise by `ori` degrees, so the point turns
+    back counterclockwise. filly counts target pixels from the lower-left corner, y up, as
+    PsychoPy does, so no axis flips.
+    """
+    if not (size[0] and size[1]):
+        return None
+    dx, dy = point[0] - center[0], point[1] - center[1]
+    angle = math.radians(ori)
+    c, s = math.cos(angle), math.sin(angle)
+    u = (c * dx - s * dy) / size[0] + 0.5
+    v = (s * dx + c * dy) / size[1] + 0.5
+    if not (0 <= u < 1 and 0 <= v < 1):
+        return None
+    return float(u * width), float(v * height)
+
+
+def _point(x, y, units):
+    """PsychoPy's contains() arguments as (pos, units): an object with getPos() and units, such as
+    a Mouse, a point, or x and y."""
+    if hasattr(x, "getPos"):
+        return x.getPos(), getattr(x, "units", None)
+    return (x if y is None else (x, y)), units
+
+
+class _Shown:
+    """The time of the flip that first showed a render of a scene; set by Window.timeOnFlip()."""
+    __slots__ = ("flipTime",)
+
+    def __init__(self):
+        self.flipTime = None
+
+
+class SceneHit:
+    """The model surface that a pick found.
+
+    Attributes
+    ----------
+    model : SceneModel or None
+        The 3D Model that the window showed at the point. None for a filly model that no
+        SceneModel owns, such as one that code added to the filly scene.
+    modelName : str or None
+        Its name: the Builder component name.
+    node : str or None
+        Name of the glTF node that carries the mesh, or None for an unnamed node.
+    nodeIndex : int
+        filly's index of that node: its index in the glTF file. Each instance of an
+        EXT_mesh_gpu_instancing node has its own index (see filly's Model.node()).
+    point : tuple of 3 float
+        World position of the surface at the center of the picked pixel, in scene units.
+    depth : float
+        Distance from the camera to `point` along the camera's viewing direction.
+    """
+
+    __slots__ = ("model", "modelName", "node", "nodeIndex", "point", "depth")
+
+    def __init__(self, model, modelName, node, nodeIndex, point, depth):
+        self.model, self.modelName, self.node, self.nodeIndex = model, modelName, node, nodeIndex
+        self.point, self.depth = point, depth
+
+    def __repr__(self):
+        point = ", ".join(f"{v:.4g}" for v in self.point)
+        return (f"<SceneHit {self.modelName} node={self.node!r} ({self.nodeIndex}) point=({point}) "
+                f"depth={self.depth:.4g}>")
+
+
+_PENDING = object()
+
+
+class ScenePick:
+    """A pick that `SceneStim.pick()` started: what the window showed at a point.
+
+    Attributes
+    ----------
+    pos, units
+        The point as given.
+    pixel : tuple of 2 float or None
+        The render-target pixel of the point, from the lower-left corner. None for a point outside
+        the image: an immediate miss.
+    frame : int or None
+        filly's frame number (`Stats.frames_rendered`) of the render that answered the pick. None
+        without a render: for a point outside the image, or a scene that the window has not shown.
+    flipTime : float or None
+        Time of the window flip that first showed the picked image, on the clock of the log file
+        (`logging.defaultClock`), as `Window.timeOnFlip()` records it. None as for `frame`.
+    """
+
+    def __init__(self, scene, pos, units, pixel, query, shown):
+        self.pos, self.units, self.pixel = pos, units, pixel
+        self._scene, self._query, self._shown = scene, query, shown
+        self.frame = query.frame_number if query is not None else None
+        self._result = _PENDING
+
+    @property
+    def flipTime(self):
+        return self._shown.flipTime if self._query is not None else None
+
+    def ready(self):
+        """Whether the answer has arrived. Does not wait for the GPU; call it once per frame."""
+        if self._result is _PENDING:
+            if self._query is None:
+                self._result = None
+            elif not self._query.ready():
+                return False
+            else:
+                self._result = self._scene._hit(self._query)
+        return True
+
+    @property
+    def result(self):
+        """A `SceneHit`, or None where the window showed no model. Raises `RuntimeError` until
+        `ready()` returns True."""
+        if not self.ready():
+            raise RuntimeError("The pick has no answer yet; call ready() once per frame until it returns True")
+        return self._result
+
+    def __repr__(self):
+        state = repr(self._result) if self._result is not _PENDING else "pending"
+        return f"<ScenePick pixel={self.pixel} frame={self.frame} {state}>"
+
+
 class _Settings:
     """State that setters change and that the next render applies, in named groups."""
 
@@ -452,7 +602,8 @@ class SceneStim(MinimalStim, _Settings):
     `visual.ImageStim`: `pos`, `size`, `units`, `ori`, and `opacity` move or fade it and need no
     new render. The other parameters describe the camera, the lights, and the rendering. Each has
     a `set<Name>()` method, named as the Builder parameter. `draw()` renders a new frame only
-    after a change to the scene or to one of its models.
+    after a change to the scene or to one of its models. `pick()` and `contains()` find the model
+    that the window shows at a point.
 
     Arguments that are None take their default. Colors are PsychoPy colors in `colorSpace`.
 
@@ -516,6 +667,11 @@ class SceneStim(MinimalStim, _Settings):
         Memory limit of the window's model cache in MiB (see `SceneModel.setModel()`). None:
         `MODEL_CACHE_MAX_BYTES`. 0 turns the cache off; 'unlimited' removes the limit. The first
         scene in a window that sets it decides.
+    picking : bool
+        Prepare the window for `pick()` and `contains()` at creation. This moves a one-time
+        driver cost (60 to 75 ms on Intel Iris Xe) from the first click to startup. Builder sets
+        it when a Mouse component or a Code component picks with the scene or its models.
+        Default False: picking still works, but the first pick is slow.
     depth : float
         Draw order for autoDraw, as for other PsychoPy stimuli.
     """
@@ -527,7 +683,7 @@ class SceneStim(MinimalStim, _Settings):
                  environment="uniform", envFile=None, envIntensity=None, envRotation=None,
                  envVisible=False, backgroundColor=None, colorSpace="rgb",
                  toneMapping="linear", antialiasing="fxaa", msaa=1, shadows=False,
-                 modelCacheMiB=None, name=None, depth=0,
+                 modelCacheMiB=None, picking=False, name=None, depth=0,
                  autoLog=None):
         from filly.integrations.psychopy import HostTarget
 
@@ -547,13 +703,19 @@ class SceneStim(MinimalStim, _Settings):
             scale = _number(1.0 if _blank(renderScale) else renderScale, "renderScale", 0, 2, low_open=True)
             resolution = np.abs(Size(size, units=units, win=win).pix) * scale
         width, height = (int(min(max(round(float(v)), 1), 8192)) for v in _vector(resolution, "resolution", 2))
+        self._width, self._height = width, height
         self._aspect = width / height
+        self._shown = None  # _Shown of the last render that draw() made
+        self._contained = None  # the ScenePick that answers contains() for the shown image
+        self.lastPick = None
         self._projection = projection
         self.models = []
         self._camera_model = None  # the model whose file camera the scene uses, if any
         self._frame_box = _EMPTY_BOX
 
         self._host = host = _host_for(win)
+        if picking:
+            host.prepare_picking()
         renderer = host.renderer
         limit = _cache_limit(modelCacheMiB)
         if limit is not None:
@@ -864,7 +1026,80 @@ class SceneStim(MinimalStim, _Settings):
         self._check_open()
         if self._needs_render():
             self._render()
+            shown = self._shown = _Shown()
+            self.win.timeOnFlip(shown, "flipTime")
         self._image.draw(win)
+
+    # --- picking -----------------------------------------------------------------------------
+
+    def _pixel(self, pos, units):
+        image, win = self._image, self.win
+        return _target_pixel(Position(pos, units, win).pix, Position(image.pos, image.units, win).pix,
+                             Size(image.size, image.units, win).pix, image.ori, self._width, self._height)
+
+    def pick(self, pos, units=None):
+        """Start to find the model that the window shows at `pos`, and return a `ScenePick`.
+
+        `pos` is a point in `units` (default: the window's units, as mouse positions are). The
+        pick describes the image that the window shows: the scene as `draw()` last rendered it,
+        which the participant saw. Settings changed since then apply at the next draw. The call
+        renders that image again with a filly pick query and returns without waiting; the answer
+        arrives one or two frames later (`ScenePick.ready()`). A point outside the image, or a
+        scene that the window has not shown, is an immediate miss without a render.
+        """
+        self._check_open()
+        units = units or self.win.units
+        pixel = self._pixel(pos, units)
+        query = None
+        if pixel is not None and self._shown is not None:
+            if min(self._width, self._height) < _PICK_MINIMUM:
+                raise ValueError(f"{self.name}: picks need a render size of at least "
+                                 f"{_PICK_MINIMUM} x {_PICK_MINIMUM} pixels")
+            renderer = self._host.renderer
+            query = renderer.pick(self._scene, *pixel)
+            renderer.render(self._scene, self._target)
+        return ScenePick(self, pos, units, pixel, query, self._shown)
+
+    def _contains(self, x, y, units):
+        """The SceneHit at a point of the shown image, or None. Waits for the answer."""
+        self._check_open()
+        pos, units = _point(x, y, units)
+        units = units or self.win.units
+        pixel = self._pixel(pos, units)
+        pick = self._contained
+        # Each model of a Mouse component's clickable list asks for the same point in the same
+        # frame: one render answers them all.
+        if pick is None or pick.pixel != pixel or pick._shown is not self._shown:
+            pick = self._contained = self.pick(pos, units)
+            if pick._query is not None:
+                self._host.renderer.finish()
+        self.lastPick = pick
+        return pick.result
+
+    def contains(self, x, y=None, units=None):
+        """Whether the window shows a model of this scene at a point.
+
+        The arguments are those of PsychoPy's `contains()`: a Mouse, a point, or x and y, in
+        `units` (default: the window's). So a Mouse component can list the scene as a clickable
+        stimulus. The answer comes from a pick of the shown image (see `pick()`), and the call
+        waits for it: it renders and waits for the GPU, but only for a point inside the image.
+        `lastPick` keeps the pick, with the model, node, and point that it found.
+        """
+        return self._contains(x, y, units) is not None
+
+    def _hit(self, query):
+        """The SceneHit of an answered filly PickQuery."""
+        import filly
+        try:
+            found = query.result
+        except filly.FillyError:  # the scene closed
+            return None
+        if found is None:
+            return None
+        model = next((m for m in self.models if m.model is not None and m.model == found.model), None)
+        node = found.node
+        return SceneHit(model, model.name if model is not None else None, node.name, node.index,
+                        tuple(found.position), float(found.depth))
 
     def close(self):
         """Release the models, the target, the scene, and the camera. Repeated calls are valid."""
@@ -881,6 +1116,7 @@ class SceneStim(MinimalStim, _Settings):
             self.camera.close()  # renderer cameras outlive their scene
         finally:
             self._image = None
+            self._contained = None
             if self in self._host.stims:
                 self._host.stims.remove(self)
 
@@ -1110,6 +1346,16 @@ class SceneModel(_Settings):
     @property
     def autoDraw(self):
         return self._state["autoDraw"]
+
+    def contains(self, x, y=None, units=None):
+        """Whether the window shows this model at a point, in front of everything else.
+
+        As `SceneStim.contains()`, whose arguments it takes, so a Mouse component can list the
+        model as a clickable stimulus. The scene's `lastPick` keeps the pick.
+        """
+        self._check_open()
+        hit = self.scene._contains(x, y, units)
+        return hit is not None and hit.model is self
 
     # Pose. The scene's camera depends on it only through the automatic clipping planes.
     def setRotation(self, rotation, log=None):

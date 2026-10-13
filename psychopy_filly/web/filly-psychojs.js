@@ -410,6 +410,111 @@ const settings = {
 	},
 };
 
+// --- picking: the same rules as runtime.py ---------------------------------------------------
+
+// Filament reads picks from a buffer of at least 32 x 32 texels (filly: Renderer.pick()).
+const PICK_MINIMUM = 32;
+// Picks that a scene keeps for contains(): pointer picks answer clicks that come later.
+const KEPT_PICKS = 8;
+// contains() takes answers of images up to this many renders older than the shown one.
+const STALE_RENDERS = 4;
+
+// Maps a window point to a pixel of a scene's render target; null outside the image. `point`,
+// `center` (the image position), and `size` (signed: a negative size flips the image) are window
+// pixels, y up. PsychoPy turns stimuli clockwise by `ori` degrees, so the point turns back
+// counterclockwise. filly counts target pixels from the lower-left corner, y up, as PsychoJS's
+// window coordinates do. The target size includes devicePixelRatio and the render scale.
+export function targetPixel(point, center, size, ori, width, height)
+{
+	if (!size[0] || !size[1])
+	{
+		return null;
+	}
+	const [dx, dy] = [point[0] - center[0], point[1] - center[1]];
+	const angle = ori * Math.PI / 180;
+	const [c, s] = [Math.cos(angle), Math.sin(angle)];
+	const u = (c * dx - s * dy) / size[0] + 0.5;
+	const v = (s * dx + c * dy) / size[1] + 0.5;
+	if (!(u >= 0 && u < 1 && v >= 0 && v < 1))
+	{
+		return null;
+	}
+	return [u * width, v * height];
+}
+
+function samePixel(a, b)
+{
+	return a !== null && b !== null && Math.floor(a[0]) === Math.floor(b[0]) && Math.floor(a[1]) === Math.floor(b[1]);
+}
+
+const PENDING = Symbol("pending");
+
+/**
+ * A pick that SceneStim.pick() started: what the window showed at a point. Poll ready() once
+ * per frame; WebGL delivers the answer 2 or 3 frames after the render that takes the query.
+ *
+ * pos, units: the point as given. pixel: the render-target pixel from the lower-left corner, or
+ * null for a point outside the image (an immediate miss). frame: filly's frame number
+ * (stats.framesRendered) of the render that took the query. flipTime: the time of the flip that
+ * first showed the picked image, in seconds of PsychoJS's MonotonicClock (the log file's clock).
+ * frame and flipTime are null without a render.
+ */
+export class ScenePick
+{
+	constructor(scene, pos, units, pixel, query, shown)
+	{
+		this.pos = pos;
+		this.units = units;
+		this.pixel = pixel;
+		this._scene = scene;
+		this._query = query;
+		this._shown = query ? shown : null;
+		this.frame = query ? query.frameNumber : null;
+		this._result = PENDING;
+	}
+
+	get flipTime()
+	{
+		return this._shown?.flipTime ?? null;
+	}
+
+	/** Whether the answer has arrived. Does not wait for the GPU. */
+	ready()
+	{
+		if (this._result === PENDING)
+		{
+			if (this._query === null)
+			{
+				this._result = null;
+			}
+			else if (!this._query.ready())
+			{
+				return false;
+			}
+			else
+			{
+				this._result = this._scene._hit(this._query);
+				this._query.dispose();
+				this._query = null;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * { model, modelName, node, nodeIndex, point, depth }, as SceneHit in runtime.py, or null
+	 * where the window showed no model. Throws until ready() returns true.
+	 */
+	get result()
+	{
+		if (!this.ready())
+		{
+			throw new FillyError("The pick has no answer yet; call ready() once per frame until it returns true");
+		}
+		return this._result;
+	}
+}
+
 function defineSceneStim(visual, util)
 {
 	/**
@@ -433,6 +538,7 @@ function defineSceneStim(visual, util)
 				stim.close();
 				throw error;
 			}
+			stim.trackPointer = Boolean(options.trackPointer);
 			return stim;
 		}
 
@@ -451,6 +557,15 @@ function defineSceneStim(visual, util)
 			this._cameraPosition = null;  // from the framing, see _applyCamera()
 			this._planes = null;  // the clipping planes that the camera has
 			this._loadingModels = new Set();  // the SceneModels that load a file
+			// Picking: the last render that an update made ({ serial, flipTime }), the picks that
+			// contains() can use, pointer picks for this frame's update, and pointer tracking.
+			this._shown = null;
+			this._serial = 0;
+			this._picks = [];
+			this._deferred = [];
+			this._trackPointer = false;
+			this._tracking = false;
+			this.lastPick = null;
 			if (blank(resolution))
 			{
 				const pixels = util.to_px(this.size, this.units, this.win);
@@ -920,7 +1035,16 @@ function defineSceneStim(visual, util)
 			this._needUpdate = false;
 			if (this._needsRender())
 			{
+				const deferred = this._deferred.splice(0);
+				const queries = deferred.map(([, pixel]) => host.renderer.pick(this._scene, pixel[0], pixel[1]));
 				this._render();
+				// The picks describe the shown image: record when it appears.
+				const shown = this._shown = { serial: ++this._serial, flipTime: null };
+				this.win.callOnFlip(() =>
+				{
+					shown.flipTime = util.MonotonicClock.getReferenceTime();
+				});
+				deferred.forEach(([pos, pixel], i) => this._keep(new ScenePick(this, pos, "pix", pixel, queries[i], shown)));
 			}
 			// One sprite for the stimulus's life: a new Texture of the base texture would add a
 			// listener to it that Sprite.destroy() does not remove (PIXI 6), at every opacity
@@ -943,6 +1067,206 @@ function defineSceneStim(visual, util)
 			this._pixi.visible = true;
 		}
 
+		// --- picking -------------------------------------------------------------------------
+
+		_pixel(pos, units)
+		{
+			const win = this.win;
+			return targetPixel(util.to_px(pos, units, win), util.to_px(this.pos, this.units, win),
+				util.to_px(this.size, this.units, win), this.ori, this._width, this._height);
+		}
+
+		// Whether the window shows a render of the scene: not before the first, nor while a
+		// model loads.
+		_showing()
+		{
+			return this._shown !== null && this._pixi?.visible === true;
+		}
+
+		/**
+		 * Start to find the model that the window shows at `pos`, in `units` (default: the
+		 * window's, as mouse positions are), and return a ScenePick. The pick describes the image
+		 * that the window shows: the scene as last rendered for a frame. Settings changed since
+		 * then apply at the next update. The call renders that image again with a filly pick
+		 * query and returns without waiting. A point outside the image, or a scene that the
+		 * window does not show, is an immediate miss without a render.
+		 */
+		pick(pos, units = undefined)
+		{
+			if (this._closed)
+			{
+				throw new FillyError(`${this.name} is closed`);
+			}
+			units = units ?? this.win.units;
+			const pixel = this._pixel(pos, units);
+			let query = null;
+			if (pixel !== null && this._showing())
+			{
+				if (Math.min(this._width, this._height) < PICK_MINIMUM)
+				{
+					throw new RangeError(`${this.name}: picks need a render size of at least ${PICK_MINIMUM} x ${PICK_MINIMUM} pixels`);
+				}
+				const renderer = this._host.renderer;
+				query = renderer.pick(this._scene, pixel[0], pixel[1]);
+				renderer.render(this._scene, this._target);
+			}
+			return new ScenePick(this, pos, units, pixel, query, this._shown);
+		}
+
+		_keep(pick)
+		{
+			this._picks.push(pick);
+			if (this._picks.length > KEPT_PICKS)
+			{
+				this._picks.shift()._query?.dispose();
+			}
+		}
+
+		// The SceneHit of the latest answered pick at a point's pixel, or null. WebGL answers a
+		// pick only frames later, so the answer cannot wait: without one, a pick for the pixel
+		// starts, for a later call.
+		_contains(object, units)
+		{
+			if (this._closed)
+			{
+				return null;
+			}
+			let pos = object;
+			if (typeof object?.getPos === "function")
+			{
+				pos = object.getPos();
+				units = object.units;
+			}
+			units = units ?? this.win.units;
+			const pixel = this._pixel(pos, units);
+			if (pixel === null || !this._showing())
+			{
+				this.lastPick = new ScenePick(this, pos, units, pixel, null, null);
+				return null;
+			}
+			let running = false;
+			for (let i = this._picks.length - 1; i >= 0; i--)
+			{
+				const pick = this._picks[i];
+				// An answer describes an image of a few frames ago: of an older render, the
+				// scene may show something else at the pixel.
+				if (!pick._shown || !samePixel(pick.pixel, pixel) || pick._shown.serial < this._shown.serial - STALE_RENDERS)
+				{
+					continue;
+				}
+				if (pick.ready())
+				{
+					this.lastPick = pick;
+					return pick.result;
+				}
+				running = true;
+			}
+			if (!running)
+			{
+				this._keep(this.pick(pos, units));
+			}
+			return null;
+		}
+
+		/**
+		 * Whether the window shows a model of this scene at a point: PsychoJS's contains(), so
+		 * that a Mouse component can list the scene as a clickable stimulus. A Mouse or a point
+		 * in `units`. Unlike the desktop, the answer comes from the latest pick at that pixel
+		 * that has arrived (see trackPointer); without one, the call returns false and starts a
+		 * pick. lastPick keeps the pick that answered.
+		 */
+		contains(object, units = undefined)
+		{
+			return this._contains(object, units) !== null;
+		}
+
+		/**
+		 * Whether the scene picks the pointer position after each flip in which the pointer
+		 * moved or the image changed, while the scene is drawn, so that contains() has an answer
+		 * when a click arrives. Each such frame renders a pick query: with the frame's own
+		 * render, or with another render of the shown image. The Builder code sets it when a
+		 * Mouse component lists the scene or one of its models as clickable.
+		 */
+		get trackPointer()
+		{
+			return this._trackPointer;
+		}
+
+		set trackPointer(value)
+		{
+			this._trackPointer = Boolean(value);
+			if (this._trackPointer && !this._tracking && !this._closed)
+			{
+				this._tracking = true;
+				this.win.callOnFlip(() => this._track());
+			}
+		}
+
+		// Runs after each flip while trackPointer is set. The window then shows the scene's last
+		// render, and this frame's update has not run yet.
+		_track()
+		{
+			if (this._closed || !this._trackPointer)
+			{
+				this._tracking = false;
+				return;
+			}
+			// The window runs its flip callbacks from an array that a new callback would extend
+			// while it iterates; the next one is added once that has finished.
+			queueMicrotask(() => this.win.callOnFlip(() => this._track()));
+			if (!this.autoDraw || !this._showing())
+			{
+				return;
+			}
+			const [x, y] = this.psychoJS.eventManager.getMouseInfo().pos;
+			const pos = [x - this.win.size[0] / 2, this.win.size[1] / 2 - y];
+			const pixel = this._pixel(pos, "pix");
+			const latest = this._picks[this._picks.length - 1];
+			if (pixel === null || this._deferred.some(([, other]) => samePixel(other, pixel))
+				|| (latest && samePixel(latest.pixel, pixel) && latest._shown === this._shown))
+			{
+				return;
+			}
+			if (this._needUpdate && this._needsRender() && !this._loadingModels.size)
+			{
+				// This frame's update renders anyway, and its render takes the query.
+				this._deferred.push([pos, pixel]);
+			}
+			else
+			{
+				this._keep(this.pick(pos, "pix"));
+			}
+		}
+
+		// The SceneHit of an answered filly PickQuery, as runtime.py's.
+		_hit(query)
+		{
+			let found;
+			try
+			{
+				found = query.result;
+			}
+			catch (error)
+			{
+				return null;  // the scene closed
+			}
+			if (!found)
+			{
+				return null;
+			}
+			try
+			{
+				const model = this.models.find((m) => m.model && m.model.equals(found.model)) ?? null;
+				return { model, modelName: model?.name ?? null, node: found.node.name, nodeIndex: found.node.index,
+					point: found.position, depth: found.depth };
+			}
+			finally
+			{
+				found.model.dispose();
+				found.node.dispose();
+			}
+		}
+
 		close()
 		{
 			if (this._closed)
@@ -954,6 +1278,12 @@ function defineSceneStim(visual, util)
 			{
 				this.setAutoDraw(false);
 			}
+			for (const pick of this._picks)
+			{
+				pick._query?.dispose();
+			}
+			this._picks = [];
+			this._deferred = [];
 			try
 			{
 				for (const model of [...this.models])
@@ -1431,6 +1761,17 @@ export class SceneModel
 		};
 		loading.then(done, done);
 		return loading;
+	}
+
+	/**
+	 * Whether the window shows this model at a point, in front of everything else: PsychoJS's
+	 * contains(), for a Mouse component's clickable stimuli. As SceneStim.contains(), which
+	 * answers from the latest pick that has arrived; the scene's lastPick keeps it.
+	 */
+	contains(object, units = undefined)
+	{
+		const hit = this.scene._contains(object, units);
+		return hit !== null && hit.model === this;
 	}
 
 	/** Show (true) or hide (false) the model in its scene. */

@@ -31,7 +31,7 @@ NON_DEFAULTS = {
     "envVisible": True, "backgroundColor": "$[0, 0, 0]", "variant": "red",
     "material": "painted", "baseColor": "blue", "animation": "spin", "animTime": 1.5,
     "animLoop": False, "toneMapping": "aces_legacy", "antialiasing": "none", "msaa": 4,
-    "shadows": True, "modelCacheMiB": "512",
+    "shadows": True, "modelCacheMiB": "512", "picking": True,
 }
 
 
@@ -140,7 +140,7 @@ def test_non_default_constants_are_arguments():
         "light": "False", "lightColor": "'red'", "environment": "'file'",
         "envFile": "'studio.hdr'", "backgroundColor": "[0, 0, 0]",
         "toneMapping": "'aces_legacy'", "msaa": "4", "shadows": "True",
-        "modelCacheMiB": "'512'",
+        "modelCacheMiB": "'512'", "picking": "True",
     }
     expected_model = {
         "rotation": "(10, 20, 30)", "modelPos": "(0.1, 0, 0)", "modelScale": "(1, 2, 1)",
@@ -433,7 +433,8 @@ def test_psychojs_non_default_arguments(tmp_path):
     for key, value in expected_model.items():
         assert f"    {key}: {value},\n" in model, key
     for key, *_ in _scene_params():
-        assert f"    {key}: " in scene, key
+        if key != "picking":  # browsers have no first-pick cost to move
+            assert f"    {key}: " in scene, key
     for key, *_ in _model_params():
         if key not in ("scene", "model"):
             assert f"    {key}: " in model, key
@@ -533,3 +534,80 @@ def test_model_cache_parameter(tmp_path, value, python, js):
     assert "modelCacheMiB" not in blank
     runtime = RUNTIME_JS.read_text(encoding="utf-8")
     assert "modelCacheMiB" in runtime
+
+
+@pytest.mark.parametrize("clickable", ["cube", "scene", "cube, scene"])
+def test_mouse_clickable_models(tmp_path, clickable):
+    """A Mouse component can list 3D Models and 3D Scenes as clickable stimuli and correct answers:
+    PsychoPy calls their contains() with the mouse."""
+    experiment = builder_helpers.build_experiment(duration=5.0)
+    builder_helpers.add_mouse(experiment, clickable=clickable)
+    script = builder_helpers.compile_script(experiment)
+    ast.parse(script)
+    assert "if obj.contains(mouse):" in script
+    names = clickable if "," not in clickable else f"[{clickable}]"
+    assert f"getFromNames({names}, namespace=locals())" in script
+    builder_helpers.write_cube(tmp_path / "cube.glb")
+    js = builder_helpers.compile_js(experiment, tmp_path)
+    assert "if (obj.contains(mouse)) {" in js
+    # Online, contains() answers from picks of the pointer that started before the click.
+    assert js.count("    trackPointer: true,\n") == 1
+
+
+def test_scene_tracks_pointer_only_for_mouse_components(tmp_path):
+    experiment = builder_helpers.build_experiment(duration=5.0)
+    assert "trackPointer" not in builder_helpers.compile_js(experiment, tmp_path / "plain")
+    builder_helpers.add_mouse(experiment, clickable="", end="any click")
+    assert "trackPointer" not in builder_helpers.compile_js(experiment, tmp_path / "unrelated")
+    mouse = _component(experiment, "mouse")
+    mouse.params["storeCorrect"].val = True
+    mouse.params["correctAns"].val = "cube"
+    assert "trackPointer: true" in builder_helpers.compile_js(experiment, tmp_path / "correct")
+
+
+def _add_code(exp, python, js):
+    from psychopy.experiment.components.code import CodeComponent
+
+    code = CodeComponent(exp, "trial", name="code")
+    code.params["Code Type"].val = "Both"
+    code.params["Each Frame"].val = python
+    code.params["Each JS Frame"].val = js
+    exp.routines["trial"].addComponent(code)
+
+
+@pytest.mark.parametrize("python,js,picking,tracks", [
+    (None, None, False, False),
+    ("if cube.contains(mouse):\n    pass", "if (cube.contains(mouse)) {}", True, True),
+    ("if mouse.isPressedIn(scene):\n    pass", "if (mouse.isPressedIn(scene)) {}", True, True),
+    ("query = scene.pick(mouse)", "query = scene.pick(mouse);", True, False),
+    ("hit = scene.lastPick", "hit = scene.lastPick;", True, False),
+    ("cubes.contains(mouse)", "cubes.contains(mouse);", False, False),  # another object's name
+])
+def test_scene_prepares_picking_only_when_used(tmp_path, python, js, picking, tracks):
+    """The window prepares picking at start (60 to 75 ms on Intel Iris Xe) only for scenes that a
+    Mouse component or a Code component picks with; online, only synchronous calls need the
+    pointer picks of trackPointer."""
+    experiment = builder_helpers.build_experiment(duration=5.0)
+    if python is not None:
+        _add_code(experiment, python, js)
+    script = builder_helpers.compile_script(experiment)
+    ast.parse(script)
+    assert ("    picking=True,\n" in script) == picking
+    builder_helpers.write_cube(tmp_path / "cube.glb")
+    assert ("trackPointer: true" in builder_helpers.compile_js(experiment, tmp_path)) == tracks
+
+
+def test_mouse_component_prepares_picking():
+    experiment = builder_helpers.build_experiment(duration=5.0)
+    builder_helpers.add_mouse(experiment, clickable="cube")
+    assert builder_helpers.compile_script(experiment).count("    picking=True,\n") == 1
+
+
+def test_mouse_picking_checkbox(tmp_path):
+    """The checkbox covers code that the text search does not find. Online it changes nothing:
+    browsers have no one-time first-pick cost to move."""
+    experiment = builder_helpers.build_experiment(duration=5.0, picking=True)
+    assert builder_helpers.compile_script(experiment).count("    picking=True,\n") == 1
+    builder_helpers.write_cube(tmp_path / "cube.glb")
+    js = builder_helpers.compile_js(experiment, tmp_path)
+    assert "picking" not in js and "trackPointer" not in js
