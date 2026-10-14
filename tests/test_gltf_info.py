@@ -76,3 +76,16 @@ def test_print(tmp_path, capsys, call):
     call(tmp_path / "cube.glb")
     output = capsys.readouterr().out
     assert "Animations (1)\n    spin  (2.00 s)\n" in output
+
+
+def test_default_model(tmp_path, monkeypatch, capsys):
+    """The name default.glb is filly's sample model unless such a file exists, as in the component."""
+    pytest.importorskip("filly")
+    sample = gltf_info.default_model_file()
+    assert gltf_info.model_file("default.glb", tmp_path) == sample
+    assert gltf_info.model_file("other.glb", tmp_path) == tmp_path / "other.glb"
+    builder_helpers.write_cube(tmp_path / "default.glb")
+    assert gltf_info.model_file("default.glb", tmp_path) == tmp_path / "default.glb"
+    monkeypatch.chdir(tmp_path.parent)
+    gltf_info.show("default.glb")
+    assert "Suzanne" in capsys.readouterr().out

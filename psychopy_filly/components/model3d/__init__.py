@@ -11,7 +11,7 @@ from psychopy.experiment.components import BaseComponent, BaseVisualComponent, P
 from psychopy.localization import _translate
 
 from ... import gltf_info
-from .._common import (ALL_UPDATES, DEFAULT_MODEL, REPEAT_UPDATES, URL, add_params,
+from .._common import (ALL_UPDATES, DEFAULT_MODEL, REPEAT_UPDATES, URL, WEB_FOLDER, add_params,
                        copy_web_files, default_model_file, experiment_folder, js_literals,
                        write_close_code, write_close_code_js, writes)
 
@@ -158,6 +158,14 @@ class Model3DComponent(BaseComponent):
                 logging.warning("psychopy-filly: filly's sample model was not found; install filly, "
                                 f"or put a {DEFAULT_MODEL} in the experiment folder")
         copy_web_files(self.exp, extra)
+        folder = experiment_folder(self.exp)
+        if extra and not (folder and (folder / DEFAULT_MODEL).is_file()):
+            # A Static or Resource Manager component that prepares the model file would download
+            # default.glb from the experiment folder, where it is not, and a Static component then
+            # waits for that download. A downloaded resource of that name satisfies both.
+            buff.writeIndentedLines(
+                "await psychoJS.serverManager.prepareResources([\n"
+                f"  {{name: '{DEFAULT_MODEL}', path: '{WEB_FOLDER}/{DEFAULT_MODEL}'}}]);\n")
         inits = js_literals(self._init_vals("PsychoJS"))
         code = (
             "{name} = await filly_runtime.SceneModel.create({{\n"
@@ -228,13 +236,7 @@ class Model3DComponent(BaseComponent):
         value = str(self.params["model"].val).strip()
         if not value or value.startswith("$") or self._model_changes():
             return None
-        path = Path(value)
-        folder = experiment_folder(self.exp)
-        if not path.is_absolute() and folder:
-            path = folder / path
-        if value == DEFAULT_MODEL and not path.is_file():
-            return default_model_file()
-        return path
+        return gltf_info.model_file(value, experiment_folder(self.exp) or None)
 
     def _check_names(self):
         """Warn about clip, variant, material, and camera names that the model file does not have.

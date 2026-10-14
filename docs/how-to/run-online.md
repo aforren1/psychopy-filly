@@ -13,11 +13,15 @@ not tested on Pavlovia.
    runtime of the plugin.
 3. Keep the `filly` folder with the experiment. Pavlovia sync uploads it with the other files.
 
+Put the model files in the experiment folder or in a folder below it, and give **Model file**
+as a relative path, for example `models/horse.glb`. Pavlovia sync does not upload a file from
+another folder, such as `C:/Users/me/Downloads/horse.glb`.
+
 The compile copies the default model to `filly/default.glb` only if the experiment can show it:
 a constant **Model file** of `default.glb`, or a model that changes per trial.
 
 The experiment loads the files in `filly` from its own server. It needs no special server
-headers. It also works on a page with cross-origin isolation headers (COOP and COEP). See
+headers, and the server can send `.wasm` files with any content type. It also works on a page with cross-origin isolation headers (COOP and COEP). See
 [cross-origin isolation](../explanation/how-it-works.md#cross-origin-isolation).
 
 ## Limits online

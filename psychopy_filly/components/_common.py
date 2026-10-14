@@ -5,7 +5,6 @@ compile experiments, also where filly is not installed. Generated code calls
 `psychopy_filly.runtime` (Python) or `filly-psychojs.js` (PsychoJS).
 """
 
-import importlib.util
 import shutil
 from pathlib import Path
 
@@ -13,12 +12,11 @@ from psychopy import logging
 from psychopy.experiment.components import Param
 from psychopy.localization import _translate
 
+from ..gltf_info import DEFAULT_MODEL, default_model_file  # noqa: F401
+
 # filly's web build and the PsychoJS runtime, copied into each experiment folder.
 WEB_FILES = Path(__file__).parents[1] / "web"
 WEB_FOLDER = "filly"
-# The 3D Model component's default model, as PsychoPy's image default is "default.png": filly's
-# sample Suzanne. A file of this name in the experiment folder takes precedence.
-DEFAULT_MODEL = "default.glb"
 URL = "https://github.com/aforren1/psychopy-filly#readme"
 
 ALL_UPDATES = ["constant", "set every repeat", "set every frame"]
@@ -31,12 +29,6 @@ JS_RUNTIME = (
     f"  filly_runtime = await import('./{WEB_FOLDER}/filly-psychojs.js');\n"
     "  filly_runtime.init({ util, visual });\n"
     "}\n")
-
-
-def default_model_file():
-    """Return the path of filly's sample model, or None, without importing filly."""
-    spec = importlib.util.find_spec("filly")
-    return Path(spec.origin).parent / "samples" / "suzanne.glb" if spec and spec.origin else None
 
 
 def add_params(component, specs, values):

@@ -4,10 +4,15 @@ This module reads only the glTF JSON, without filly, so that Builder can use it 
 installed. A .glb file is read only up to the end of its JSON chunk.
 """
 
+import importlib.util
 import json
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# The 3D Model component's default model, as PsychoPy's image default is "default.png": filly's
+# sample Suzanne. A file of this name takes precedence.
+DEFAULT_MODEL = "default.glb"
 
 GLB_MAGIC = 0x46546C67
 JSON_CHUNK = 0x4E4F534A
@@ -33,6 +38,25 @@ class Contents:
 
 
 _cache = {}
+
+
+def default_model_file():
+    """Return the path of filly's sample model, or None, without importing filly."""
+    spec = importlib.util.find_spec("filly")
+    return Path(spec.origin).parent / "samples" / "suzanne.glb" if spec and spec.origin else None
+
+
+def model_file(value, folder=None):
+    """Return the path of the model file `value`, relative to `folder` if given.
+
+    DEFAULT_MODEL without such a file is filly's sample model (None without filly).
+    """
+    path = Path(value)
+    if folder is not None and not path.is_absolute():
+        path = Path(folder) / path
+    if str(value) == DEFAULT_MODEL and not path.is_file():
+        return default_model_file()
+    return path
 
 
 def read_document(path):
@@ -154,9 +178,11 @@ def show(*paths):
 
     >>> from psychopy_filly import gltf_info
     >>> gltf_info.show(r"C:\\experiment\\model.glb")
+
+    "default.glb" without such a file is filly's sample model, as in the 3D Model component.
     """
     for path in paths:
-        print(summary(contents(path), str(path)))
+        print(summary(contents(model_file(path)), str(path)))
 
 
 def main(argv=None):

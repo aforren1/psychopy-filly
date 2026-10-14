@@ -394,10 +394,20 @@ def test_default_model(tmp_path):
     assert (tmp_path / "filly" / DEFAULT_MODEL).read_bytes() == filly.samples.SUZANNE.read_bytes()
     assert "model: 'default.glb'," in script
     assert "'path': 'default.glb'" not in script
+    # Registered at its path, for a Static or Resource Manager component that prepares it.
+    registration = "{name: 'default.glb', path: 'filly/default.glb'}"
+    assert registration in script
     other = tmp_path / "other"
     other.mkdir()
-    builder_helpers.compile_js(builder_helpers.build_experiment(), other)
+    script = builder_helpers.compile_js(builder_helpers.build_experiment(), other)
     assert not (other / "filly" / DEFAULT_MODEL).exists()
+    assert registration not in script
+    # The experiment's own default.glb is a resource as any other file.
+    own = tmp_path / "own"
+    own.mkdir()
+    builder_helpers.write_cube(own / DEFAULT_MODEL)
+    script = builder_helpers.compile_js(builder_helpers.build_experiment(model=DEFAULT_MODEL), own)
+    assert registration not in script
 
 
 @pytest.mark.parametrize("target", ["PsychoPy", "PsychoJS"])

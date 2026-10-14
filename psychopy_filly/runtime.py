@@ -25,12 +25,9 @@ from psychopy.layout import Position, Size
 from psychopy.visual.basevisual import MinimalStim
 
 from . import gltf_info
+from .gltf_info import DEFAULT_MODEL
 
 __all__ = ["SceneStim", "SceneModel", "ScenePick", "SceneHit", "close_all", "DEFAULT_MODEL"]
-
-# The 3D Model component's default model, filly's sample Suzanne. A file of this name in the working
-# directory takes precedence.
-DEFAULT_MODEL = "default.glb"
 
 # Memory limit of each window's model cache (see _ModelCache), in bytes of filly's estimate.
 # 0 turns the cache off; None removes the limit. A 3D Scene's "Model cache (MiB)" parameter

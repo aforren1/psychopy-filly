@@ -218,6 +218,20 @@ def test_default_model(tmp_path, node, psychojs_lib):
     assert 0.02 < _model_fraction(_screenshot(report["screenshots"][0])) < 0.5
 
 
+def test_default_model_set_during_static_period(tmp_path, node, psychojs_lib):
+    """A Static component that sets the default model prepares it as a resource first: PsychoJS
+    must find it in the filly folder."""
+    from psychopy.experiment.components.static import StaticComponent
+    exp = builder_helpers.build_experiment(model=("default.glb", "set during: trial.ISI"), duration=3.0)
+    isi = StaticComponent(exp, "trial", name="ISI", startVal=0.0, stopVal=0.5)
+    exp.routines["trial"].insert(0, isi)
+    isi.addComponentUpdate("trial", "cube", "model")
+    builder_helpers.compile_js(exp, tmp_path, duration=3.0)
+    shutil.copytree(psychojs_lib, tmp_path / "lib", dirs_exist_ok=True)
+    report = _run(node, tmp_path, "chrome", screenshots=[1.5])
+    assert 0.02 < _model_fraction(_screenshot(report["screenshots"][0])) < 0.5
+
+
 def test_set_model(tmp_path, node, psychojs_lib):
     """setModel() replaces the model in a running experiment; the new one is drawn."""
     folder = _experiment(tmp_path, psychojs_lib, model="default.glb", duration=10.0)
