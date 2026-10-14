@@ -29,8 +29,9 @@ not yet run on Pavlovia: see [Phases](#phases). Facts marked "(phase 0)" were ch
   `psychopy-` prefix and a module name with underscores.
 - Keep the plugin in its own repository. Unlike the MATLAB frontend, it contains no native code:
   it generates Python and JavaScript that call filly's public API, and it is meant to depend on
-  a released filly version. That is not true yet: the runtime needs filly 0.2, which is not on
-  PyPI (see [Dependencies and compatibility](#dependencies-and-compatibility)).
+  a released filly version. filly 0.2.0, the first version with the API that the runtime
+  calls, is on PyPI since 2026-10-13 (see
+  [Dependencies and compatibility](#dependencies-and-compatibility)).
 
 ## How PsychoPy plugins work
 
@@ -187,7 +188,7 @@ fails at compile time. Decisions:
   per pose. A clip re-applies the base color only to the materials whose base color a clip
   animates (filly's `AnimationInfo.material_properties`).
 
-The parameter tables are in the README.
+The parameter tables are in the [parameter reference](docs/reference/parameters.md).
 
 ### Object picking (since 2026-10-13)
 
@@ -223,10 +224,11 @@ Decisions:
   `trackPointer` picks the pointer position after each flip in which it moved or the image
   changed, with the frame's own render when there is one. The compile sets it when a Mouse
   component names the scene or one of its models. Touch taps and clicks less than 3 frames
-  after the pointer arrives get no answer; the README says to use `pick()` and a Code component
-  for them. Rejected: re-arming the Mouse component's press detection (its `prevButtonState` is
-  a module variable of the generated script) and waiting for the answer (WebGL signals fences
-  only between tasks).
+  after the pointer arrives get no answer;
+  [select models with the mouse](docs/how-to/select-models.md#online) says to use `pick()` and a
+  Code component for them. Rejected: re-arming the Mouse component's press detection (its
+  `prevButtonState` is a module variable of the generated script) and waiting for the answer
+  (WebGL signals fences only between tasks).
 - filly support (2026-10-13): `prepare()` renders a hidden pick once per renderer, so the
   Python host prepares an empty scene on the direct output path (60 to 75 ms on Intel Iris Xe)
   when a scene expects picks: `SceneStim(picking=True)`, which the compile writes for the
@@ -302,8 +304,10 @@ after the parameter key (`_getParamCaps`). Direct attribute assignments such as
   neither. Since 2026-10-12 the package requires `psychopy>=2024.2`: the owner assumes the
   `psychopy` distribution. The PsychoPy 2026.1.2 app registers `psychopy`, and a pip dry run
   with the app's Python installed nothing for `psychopy>=2024.2`.
-  `psychopy_filly.runtime.TESTED_PSYCHOPY` lists the tested versions and the runtime logs a
-  warning for others. README.md "Test" installs each tested version.
+  The tested versions are the CI matrix (2024.2.4 and 2026.2.4);
+  [develop the plugin](docs/how-to/develop.md#test) installs each. A run-time warning for
+  other versions was removed on 2026-10-13: the requirement states the supported range, and
+  the warning fired for every untested patch release.
 - Baseline (2026-10-12): PsychoPy 2024.2, the first release with a Python 3.10 standalone
   install (earlier ones ship Python 3.6 or 3.8; filly needs 3.10). Tested: 2024.2.4 (Python
   3.10) and 2026.2.4 (Python 3.11), locally (code generation, display, Escape order) and in
@@ -318,8 +322,8 @@ after the parameter key (`_getParamCaps`). Direct attribute assignments such as
 - PsychoPy standalone installs ship their own Python. filly publishes wheels for Python 3.10, 3.11,
   and 3.12 and later (one `cp312-abi3` wheel), for Windows and Linux x86_64. Check the Python
   version of each standalone release. PsychoPy 2026.1.2 (Windows) ships Python 3.10.11,
-  pyglet 1.4.11, and wxPython 4.2.5 (phase 0). The runtime needs filly 0.2, which is not on
-  PyPI yet; filly 0.1.0 on PyPI has these wheels but not the API that the runtime calls.
+  pyglet 1.4.11, and wxPython 4.2.5 (phase 0). The runtime needs filly 0.2, which is on PyPI
+  since 2026-10-13 with these wheels; filly 0.1.0 does not have the API that the runtime calls.
 - PsychoPy pins pyglet 1.4.11 on Windows only. psychopy-lib 2026.2.4 requires pyglet 1.5.27 on
   other platforms (phase 0), so Linux runs need their own tests. Version 1.4.11 can crash when a
   program closes a window and then opens another (see filly's validation reference). A normal
@@ -410,7 +414,7 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
 
 ### Phase 1 results
 
-- The component has the parameters listed in the [README](README.md#parameters).
+- The component has the parameters listed in the [parameter reference](docs/reference/parameters.md).
   Differences from the phase 1 plan: field of view, view height, clipping planes,
   and light and environment intensity can change every frame; the environment source is
   constant, because loading a panorama filters it.
@@ -513,7 +517,7 @@ Instead:
 | Front-buffer reads of `useFBO=True` windows return only the background on the test laptop | The screen shows the stimuli (user check, 2026-10-03); tests read the back buffer | Check other GPUs; the README keeps "average (no FBO)" as a troubleshooting step |
 | Command-line compile (`psyexpCompile`, used with **Use version**) drops plugin components | Seen in phase 0 | Document; report upstream |
 | PsychoJS export defects in psychopy-lib 2026.2.4 (f-string participant default; `MaxDuration = None`) | Seen on 2026-10-03, also without filly, for experiments made in Python | Check in the Builder app; report upstream |
-| PsychoPy standalone Python versions and filly wheel coverage | Checked for 2024.2 and later (see [Dependencies and compatibility](#dependencies-and-compatibility)); filly 0.2 wheels are not published | Publish filly 0.2; check each new standalone release |
+| PsychoPy standalone Python versions and filly wheel coverage | Checked for 2024.2 and later (see [Dependencies and compatibility](#dependencies-and-compatibility)); filly 0.2.0 wheels for cp310, cp311, and cp312-abi3 are on PyPI (2026-10-13) | Check each new standalone release |
 | `.gltf` external files not collected as resources | Known; they load if they are in the experiment folder | Recommend `.glb`; list external files in the component |
 | WebGL1 on Android and other non-Apple mobile devices | The component stops with a message | Set PIXI's `PREFER_ENV` before the window opens, if PsychoJS allows it; test on devices |
 | Frames during stimulus creation take up to 150 ms (Chrome, Edge) or 283 ms (Firefox) | Measured on 2026-10-03 after frame yields, the uniform environment, and `prepare()` | Split the remaining steps; give transparent scenes an alpha swap chain so that Filament needs no blit; wait for Firefox to support `KHR_parallel_shader_compile` |

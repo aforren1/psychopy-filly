@@ -13,9 +13,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Alex Forrence", email = "alex.forrence@gmail.com" }]
 # The standalone app registers the "psychopy" distribution, so the requirement is already met
-# there. 2024.2 is the first release with a Python 3.10 standalone install. The tested versions
-# are in psychopy_filly.runtime.TESTED_PSYCHOPY, which warns at run time for others.
-dependencies = ["filly>=0.2.0.dev0,<0.3", "numpy", "psychopy>=2024.2"]
+# there. 2024.2 is the first release with a Python 3.10 standalone install. CI tests 2024.2.4
+# and 2026.2.4 (.github/workflows/release.yml).
+dependencies = ["filly>=0.2,<0.3", "numpy", "psychopy>=2024.2"]
 
 [project.urls]
 Homepage = "https://github.com/aforren1/psychopy-filly"

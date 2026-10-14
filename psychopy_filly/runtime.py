@@ -20,22 +20,17 @@ from pathlib import Path
 
 import numpy as np
 from psychopy import logging
-from psychopy import __version__ as psychopy_version
 from psychopy.colors import Color
 from psychopy.layout import Position, Size
 from psychopy.visual.basevisual import MinimalStim
 
 from . import gltf_info
 
-__all__ = ["SceneStim", "SceneModel", "ScenePick", "SceneHit", "close_all", "TESTED_PSYCHOPY",
-           "DEFAULT_MODEL"]
+__all__ = ["SceneStim", "SceneModel", "ScenePick", "SceneHit", "close_all", "DEFAULT_MODEL"]
 
 # The 3D Model component's default model, filly's sample Suzanne. A file of this name in the working
 # directory takes precedence.
 DEFAULT_MODEL = "default.glb"
-
-# The filly adapter uses PsychoPy internals (ImageStim texture path, the window's image shader).
-TESTED_PSYCHOPY = ("2024.2.4", "2026.2.4")
 
 # Memory limit of each window's model cache (see _ModelCache), in bytes of filly's estimate.
 # 0 turns the cache off; None removes the limit. A 3D Scene's "Model cache (MiB)" parameter
@@ -44,11 +39,9 @@ MODEL_CACHE_MAX_BYTES = 2**30
 
 _hosts = []  # _Host objects, one per window
 _atexit_registered = False
-_version_checked = False
 
 
 def _check_environment(win):
-    global _version_checked
     if sys.platform not in ("win32", "linux"):
         raise RuntimeError(f"psychopy-filly supports Windows and Linux only, not {sys.platform}")
     if win.winType != "pyglet":
@@ -59,12 +52,6 @@ def _check_environment(win):
         raise RuntimeError(
             f"psychopy-filly requires the 'avg' blend mode, but this window uses "
             f"{win.blendMode!r}. Set the blend mode to 'average' in the experiment settings.")
-    if not _version_checked:
-        _version_checked = True
-        if psychopy_version not in TESTED_PSYCHOPY:
-            logging.warning(
-                f"psychopy-filly was tested with PsychoPy {', '.join(TESTED_PSYCHOPY)}, "
-                f"not {psychopy_version}")
 
 
 class _Host:

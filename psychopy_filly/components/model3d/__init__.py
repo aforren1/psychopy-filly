@@ -31,7 +31,8 @@ _NAME_PARAMS = {
 # (name, default, valType, inputType, tab, allowed updates, allowed values, label, hint).
 # Each name is also the SceneModel argument and, with "set" and a capital, its setter.
 MODEL_PARAMS = [
-    ("scene", "scene", "code", "single", "Basic", [], None, "Scene",
+    # A name, not code: Builder evaluates constant code fields and warns about the NameError.
+    ("scene", "scene", "str", "single", "Basic", [], None, "Scene",
      "Name of the 3D Scene component that shows this model. It must come before this component: "
      "in an earlier routine, or above it in the same routine"),
     ("model", DEFAULT_MODEL, "file", "file", "Basic", REPEAT_UPDATES, None, "Model file",
@@ -64,7 +65,9 @@ MODEL_PARAMS = [
     ("animation", "", "str", "single", "Animation", REPEAT_UPDATES, None, "Animation clip",
      "Name or index of an animation clip in the model file. Blank: no animation." + CHECK),
     ("animTime", "", "num", "single", "Animation", ALL_UPDATES, None, "Animation time (s)",
-     "Time in the clip, for example t with 'set every frame' to play it"),
+     "Time in the clip, in seconds. To play the clip from this model's start, use "
+     "t - <name>.tStart (for example t - cube.tStart) with 'set every frame'. For one pose per "
+     "trial, use a conditions column with 'set every repeat'. Blank: the clip's first pose"),
     ("animLoop", True, "bool", "bool", "Animation", [], None, "Loop animation",
      "Wrap times beyond the clip duration. Otherwise the last pose holds"),
 ]

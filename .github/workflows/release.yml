@@ -5,8 +5,8 @@ name: Build and release
 # PsychoPy version. A pushed tag vX.Y.Z whose version matches pyproject.toml also publishes to
 # PyPI. A manual run can publish to TestPyPI instead. Publishing uses PyPI trusted publishing:
 # no token is stored here.
-# filly 0.2 must be on PyPI first: the tests install it, and PyPI has only filly 0.1.0, which
-# cannot run this plugin.
+# The tests install filly from PyPI, so a release that needs a new filly API waits for that filly
+# release.
 on:
   workflow_dispatch:
     inputs:
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        # The tested PsychoPy versions (psychopy_filly.runtime.TESTED_PSYCHOPY). 2024.2.4 supports
+        # The tested PsychoPy versions (docs/how-to/develop.md, "Test"). 2024.2.4 supports
         # Python 3.8 to 3.10, and filly needs 3.10 or later.
         include:
           - psychopy: '2024.2.4'
