@@ -98,14 +98,16 @@ def _create(win, model, **arguments):
     return scene, shown
 
 
-def _front(win):
-    return np.asarray(win._getFrame(buffer="front")).astype(int)
+def _back(win):
+    # Before the flip: front-buffer reads return zeros under Xvfb with Mesa (CI).
+    return np.asarray(win._getFrame(buffer="back")).astype(int)
 
 
 def _show(win, scene):
     scene.draw()
+    pixels = _back(win)
     win.flip()
-    return _front(win)
+    return pixels
 
 
 def _model_mask(pixels, background=BACKGROUND):
@@ -130,8 +132,8 @@ def test_scene_renders_only_after_change(window, cube_path):
     cube.setRotation((20, 60, 0))
     scene.draw()
     assert stats() == 3
+    pixels = _back(win)
     win.flip()
-    pixels = _front(win)
     assert (np.abs(pixels[100:140, 150:190] - BACKGROUND).sum(axis=2) > 12).mean() > 0.9
 
     renderer = scene._host.renderer
@@ -848,4 +850,6 @@ def test_compiled_mouse_click_on_model(tmp_path, where, valid):
     if valid:
         assert flips <= 32 and clicked == "cube"
     else:
-        assert flips > 200 and clicked in ("", "None")
+        # The routine goes on well past the click at flip 30. No exact count: the frame rate of
+        # CI's software GL is below 60 Hz.
+        assert flips > 90 and clicked in ("", "None")

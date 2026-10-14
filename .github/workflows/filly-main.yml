@@ -1,0 +1,77 @@
+name: Test with filly main
+
+# Tests psychopy-filly with filly's main branch instead of the filly release on PyPI: the Linux
+# wheels of filly's latest successful "Build wheels" run on main. A failure here, with the
+# release workflow passing, means the next filly release needs a change in psychopy-filly.
+# Unlike the release workflow, this also runs the display tests, under Xvfb with Mesa's software
+# OpenGL. The browser tests do not run: they use the vendored web build, not filly main.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: filly-main-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PsychoPy ${{ matrix.psychopy }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The tested PsychoPy versions, as in release.yml.
+        include:
+          - psychopy: '2024.2.4'
+            python: '3.10'
+          - psychopy: '2026.2.4'
+            python: '3.11'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the system libraries that filly, pyglet, and PsychoPy load
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libglu1-mesa xvfb xauth libxxf86vm1 \
+            libasound2t64 libpulse0 libportaudio2 libusb-1.0-0 libgtk-3-0
+      - name: Download filly's wheels from its latest successful main build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read -r id sha < <(gh run list -R aforren1/filly -w wheels.yml -b main -s success -L 1 \
+            --json databaseId,headSha -q '.[0] | "\(.databaseId) \(.headSha)"')
+          if [ -z "$id" ]; then echo "::error::filly main has no successful wheel build"; exit 1; fi
+          echo "filly main ${sha}, run https://github.com/aforren1/filly/actions/runs/${id}" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run download "$id" -R aforren1/filly -n wheels-ubuntu-24.04 -D filly-wheels
+      - name: Build psychopy-filly and install it with filly main
+        run: |
+          uv build --wheel -o dist
+          tag=cp${PYTHON_VERSION/./}
+          wheel=$(ls filly-wheels/filly-*-"$tag"-*.whl 2>/dev/null || ls filly-wheels/filly-*-abi3-*.whl)
+          # filly main can have a version outside psychopy-filly's requirement on filly.
+          cp tests/psychopy-overrides.txt overrides.txt
+          echo "filly @ file://$PWD/$wheel" >> overrides.txt
+          uv pip install --system --override overrides.txt "$wheel" dist/*.whl \
+            "psychopy==${{ matrix.psychopy }}" "pytest>=8" pillow
+          python -c "import filly, psychopy; print('filly', filly.__version__, 'psychopy', psychopy.__version__)"
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+      - name: Test
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          # Run from the tests folder, so that the installed wheel is tested, not the source.
+          cd tests
+          xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q -m "not browser" \
+            -o faulthandler_timeout=120

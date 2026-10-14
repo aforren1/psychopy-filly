@@ -40,6 +40,11 @@ which has no Linux wheels on PyPI. The tests do not use either.
 The command installs filly from PyPI. To test unreleased filly changes, add the path of a
 filly checkout, for example `..\filly`, to the command. This builds filly.
 
+CI tests with both filly versions. `.github/workflows/release.yml` uses the filly release on
+PyPI. `.github/workflows/filly-main.yml` uses the wheels of filly's latest successful build of
+its main branch. It runs daily and at each push, and it also runs the display tests, under Xvfb
+with software OpenGL.
+
 Run the tests:
 
 ```powershell
