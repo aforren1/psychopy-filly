@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv publishes no major-version tags since v8
       - name: Install the system libraries that filly, pyglet, and PsychoPy load
         run: |
           sudo apt-get update
