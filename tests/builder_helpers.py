@@ -149,7 +149,7 @@ def write_cube(path, pulse=False):
 
 
 def build_experiment(model="cube.glb", duration=3.0, win_size=(800, 600), blend_mode="nofbo",
-                     size=(0.6, 0.6), **params):
+                     size=(0.6, 0.6), keyboard_backend=None, **params):
     """Return a one-routine experiment with a 3D Scene component named "scene" and, below it, a
     3D Model component named "cube" in that scene.
 
@@ -157,7 +157,8 @@ def build_experiment(model="cube.glb", duration=3.0, win_size=(800, 600), blend_
     (value, updates). The default rotates the model: rotation=("(20, 90*t, 0)", "set every frame").
 
     The settings suit unattended runs: no info dialog, no frame-rate measurement, a window.
-    The default blend mode is "nofbo" (average, no framebuffer object).
+    The default blend mode is "nofbo" (average, no framebuffer object). `keyboard_backend`: an
+    experiment setting value, for example "Pyglet"; None keeps Builder's default, PsychToolbox.
     """
     from psychopy import experiment
     from psychopy.experiment.routines import Routine
@@ -173,6 +174,8 @@ def build_experiment(model="cube.glb", duration=3.0, win_size=(800, 600), blend_
     settings["measureFrameRate"].val = False
     settings["frameRate"].val = 60
     settings["blendMode"].val = blend_mode
+    if keyboard_backend:
+        settings["keyboardBackend"].val = keyboard_backend
     routine = Routine("trial", exp)
     exp.addRoutine("trial", routine)
     exp.flow.addRoutine(routine, 0)

@@ -20,6 +20,10 @@ pytestmark = pytest.mark.display
 pytest.importorskip("filly")
 
 BACKGROUND = 128  # PsychoPy's default window color, (0, 0, 0) in rgb, read back as 128
+# The keyboard backend of the experiments that run. Psychtoolbox's keyboard thread on Linux
+# writes a warning through Python without the GIL when it cannot raise its priority, as in CI
+# and containers. The corrupted interpreter then hangs or crashes at exit, in about 1 run of 10.
+RUN_KEYBOARD = "Pyglet"
 
 
 def _model_fraction(path):
@@ -30,7 +34,8 @@ def _model_fraction(path):
 
 def _run_compiled(tmp_path, frames, escape_at=None, duration=2.0, blend_mode="nofbo"):
     script = tmp_path / "filly_cube.py"
-    experiment = builder_helpers.build_experiment(duration=duration, blend_mode=blend_mode)
+    experiment = builder_helpers.build_experiment(duration=duration, blend_mode=blend_mode,
+                                                  keyboard_backend=RUN_KEYBOARD)
     script.write_text(builder_helpers.compile_script(experiment), encoding="utf-8")
     builder_helpers.write_cube(tmp_path / "cube.glb")
     env = dict(os.environ)
@@ -38,9 +43,10 @@ def _run_compiled(tmp_path, frames, escape_at=None, duration=2.0, blend_mode="no
         env["ESCAPE_AT"] = str(escape_at)
     # A separate process: one window per process avoids pyglet 1.4.11's window-class reuse crash,
     # and the script ends with core.quit(), as in the Runner.
+    # faulthandler: a crash reports the Python stack in result.stderr.
     result = subprocess.run(
-        [sys.executable, "-W", "default", str(TESTS / "run_with_capture.py"), str(script),
-         str(tmp_path / "capture"), *map(str, frames)],
+        [sys.executable, "-X", "faulthandler", "-W", "default", str(TESTS / "run_with_capture.py"),
+         str(script), str(tmp_path / "capture"), *map(str, frames)],
         capture_output=True, text=True, timeout=120, env=env)
     events = json.loads((tmp_path / "capture" / "events.json").read_text())
     return result, events
@@ -53,14 +59,15 @@ def _close_order(events):
 @pytest.mark.parametrize("blend_mode", ["nofbo", "avg"])
 def test_compiled_experiment_shows_rotating_model(tmp_path, blend_mode):
     # "avg" is Builder's default blend mode, which makes a window with useFBO=True.
-    result, events = _run_compiled(tmp_path, frames=(20, 60), blend_mode=blend_mode)
+    # Frames early in the 2 s routine: software GL in CI can run below 30 Hz.
+    result, events = _run_compiled(tmp_path, frames=(10, 30), blend_mode=blend_mode)
     assert result.returncode == 0, result.stderr[-3000:]
     assert "Traceback" not in result.stderr
     assert "was not closed" not in result.stderr
     # Targets, then the renderer, both while the window is open, then the window.
     assert _close_order(events["events"]) == [("target", True), ("renderer", True), ("window", True)]
-    first, a = _model_fraction(tmp_path / "capture" / "frame_20.png")
-    second, b = _model_fraction(tmp_path / "capture" / "frame_60.png")
+    first, a = _model_fraction(tmp_path / "capture" / "frame_10.png")
+    second, b = _model_fraction(tmp_path / "capture" / "frame_30.png")
     assert 0.03 < first < 0.5 and 0.03 < second < 0.5
     # Rotation changes the image.
     assert np.abs(a - b).sum(axis=2).astype(bool).mean() > 0.01
@@ -825,14 +832,14 @@ def test_pick_describes_the_shown_image(window, cube_path):
 
 def _run_click(tmp_path, where):
     script = tmp_path / "filly_cube.py"
-    experiment = builder_helpers.build_experiment(duration=4.0, fill=0.5)
+    experiment = builder_helpers.build_experiment(duration=4.0, fill=0.5, keyboard_backend=RUN_KEYBOARD)
     builder_helpers.add_mouse(experiment)
     script.write_text(builder_helpers.compile_script(experiment), encoding="utf-8")
     builder_helpers.write_cube(tmp_path / "cube.glb")
     env = dict(os.environ, CLICK_AT="30", CLICK_POS=where)
     result = subprocess.run(
-        [sys.executable, "-W", "default", str(TESTS / "run_with_capture.py"), str(script),
-         str(tmp_path / "capture")], capture_output=True, text=True, timeout=120, env=env)
+        [sys.executable, "-X", "faulthandler", "-W", "default", str(TESTS / "run_with_capture.py"),
+         str(script), str(tmp_path / "capture")], capture_output=True, text=True, timeout=120, env=env)
     assert result.returncode == 0, result.stderr[-3000:]
     assert "Traceback" not in result.stderr
     flips = json.loads((tmp_path / "capture" / "events.json").read_text())["flips"]
@@ -850,6 +857,6 @@ def test_compiled_mouse_click_on_model(tmp_path, where, valid):
     if valid:
         assert flips <= 32 and clicked == "cube"
     else:
-        # The routine goes on well past the click at flip 30. No exact count: the frame rate of
-        # CI's software GL is below 60 Hz.
-        assert flips > 90 and clicked in ("", "None")
+        # The routine goes on past the click at flip 30, which would end it by flip 32. No count
+        # from the duration: the frame rate of CI's software GL is below 60 Hz.
+        assert flips > 45 and clicked in ("", "None")
