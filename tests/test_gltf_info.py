@@ -5,6 +5,7 @@ import struct
 from pathlib import Path
 
 import builder_helpers
+import pytest
 from psychopy_filly import gltf_info
 
 
@@ -68,8 +69,10 @@ def test_contents_follow_file_changes(tmp_path):
     assert [item.key for item in gltf_info.contents(path).materials] == ["b", "c"]
 
 
-def test_command_line(tmp_path, capsys):
+@pytest.mark.parametrize("call", [lambda path: gltf_info.main([str(path)]), gltf_info.show],
+                         ids=["command line", "show"])
+def test_print(tmp_path, capsys, call):
     builder_helpers.write_cube(tmp_path / "cube.glb")
-    gltf_info.main([str(tmp_path / "cube.glb")])
+    call(tmp_path / "cube.glb")
     output = capsys.readouterr().out
     assert "Animations (1)\n    spin  (2.00 s)\n" in output

@@ -481,7 +481,7 @@ button and name menus worked in the 2026.1.2 app and was removed on 2026-10-03 f
 Instead:
 
 - `psychopy_filly.gltf_info` reads the names from the glTF JSON without filly, and
-  `python -m psychopy_filly.gltf_info FILE` prints them.
+  `gltf_info.show(FILE)` (Coder's Shell) or `python -m psychopy_filly.gltf_info FILE` prints them.
 - The compile warns about clip, variant, material, and camera names that the model file does
   not have, and lists the names that it has.
 - filly's lookup errors list the names of that kind in the model, locally and online.

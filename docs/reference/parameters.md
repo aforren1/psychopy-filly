@@ -99,13 +99,17 @@ The model is visible in its scene from the component's start to its stop.
 
 ### Names in a model file
 
-To list the animation clips, material variants, materials, and cameras in a model, run:
+To list the animation clips, material variants, materials, and cameras in a model, open the
+Coder window (the **Show Coder** button on the Builder toolbar) and type in its **Shell** tab:
 
-```powershell
-python -m psychopy_filly.gltf_info model.glb
+```python
+from psychopy_filly import gltf_info
+gltf_info.show(r"C:\experiment\model.glb")
 ```
 
-It also lists lights, morph targets, skins with their bones, and the node tree.
+Use the full path of the model file. The list also has the lights, the morph targets, the skins
+with their bones, and the node tree. From a command line in the Python environment of PsychoPy,
+`python -m psychopy_filly.gltf_info model.glb` prints the same list.
 
 ## Compile checks
 

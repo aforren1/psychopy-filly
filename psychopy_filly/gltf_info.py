@@ -130,7 +130,7 @@ def _contents(document):
 
 
 def summary(contents, title):
-    """Return a plain-text description of `contents`, for a dialog that users can copy from."""
+    """Return a plain-text description of `contents`."""
     lines = [title, ""]
 
     def section(heading, items):
@@ -149,6 +149,16 @@ def summary(contents, title):
     return "\n".join(lines).rstrip() + "\n"
 
 
+def show(*paths):
+    """Print the contents of glTF files. In the Shell of PsychoPy's Coder window:
+
+    >>> from psychopy_filly import gltf_info
+    >>> gltf_info.show(r"C:\\experiment\\model.glb")
+    """
+    for path in paths:
+        print(summary(contents(path), str(path)))
+
+
 def main(argv=None):
     """Print the contents of glTF files: python -m psychopy_filly.gltf_info FILE [FILE ...]"""
     import argparse
@@ -156,8 +166,7 @@ def main(argv=None):
                                      description="List the animations, variants, materials, cameras, "
                                                  "lights, morph targets, skins, and nodes of glTF files.")
     parser.add_argument("files", nargs="+", type=Path)
-    for path in parser.parse_args(argv).files:
-        print(summary(contents(path), str(path)))
+    show(*parser.parse_args(argv).files)
 
 
 if __name__ == "__main__":
