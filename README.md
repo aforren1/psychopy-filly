@@ -12,15 +12,11 @@ the **Stimuli** category:
 [filly](https://github.com/aforren1/filly) renders the models. The components work in local
 experiments (PsychoPy) and in online experiments (PsychoJS).
 
-Status: not released. Online experiments ran in Chrome, Edge, and Firefox on one Windows
-laptop. They were not run on Pavlovia.
-
 ## Requirements
 
 - Windows or Linux. filly does not support macOS.
 - PsychoPy 2024.2 or later. Tested with PsychoPy 2024.2.4 and 2026.2.4.
 - The pyglet window backend and an "average" blend mode (the defaults).
-- filly 0.2 or later. pip installs it with the plugin.
 - Online: a browser with WebGL2.
 
 If the window shows no stimuli at all, also without a 3D Scene, set **Blend mode** to
@@ -34,13 +30,6 @@ that runs PsychoPy:
 ```powershell
 python -m pip install psychopy-filly
 ```
-
-Until the first release, install from a copy of this repository:
-`python -m pip install <path to psychopy-filly>`.
-
-After you update psychopy-filly or filly, install it again and restart PsychoPy. The PsychoPy
-app keeps its own copy of installed packages, and it keeps the component classes that it
-loaded until it restarts.
 
 ## Quick start
 
