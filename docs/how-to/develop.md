@@ -102,7 +102,7 @@ The test helper `compile_js()` in `tests/builder_helpers.py` avoids both.
 `psychopy_filly/web` holds a copy of filly's web build. To update it:
 
 1. In filly, build the Filament WebAssembly SDK once, then filly's module, on Linux or WSL:
-   `tools/build_filament_web.sh`, then `tools/build_filly_web.sh`. See filly's
+   `web/tools/build_filament_web.sh`, then `web/tools/build_filly_web.sh`. See filly's
    [build guide](https://github.com/aforren1/filly/blob/main/docs/how-to/build.md#build-for-the-web).
 2. In psychopy-filly, run `python tools/vendor_web.py ../filly/build/web`. It copies the files
    and writes their sizes and SHA-256 hashes to `psychopy_filly/web/VENDOR.json`.

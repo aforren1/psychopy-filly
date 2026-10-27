@@ -350,8 +350,8 @@ earlier plan assumed Filament's stock JavaScript build and is replaced.
   (`settings.PREFER_ENV`). PsychoJS does not export PIXI.
 - The Filament npm package stops at version 1.53.4. Filament material packages are tied to the
   engine version, so filly builds Filament 1.77.1 for WebAssembly itself
-  (`filly/tools/build_filament_web.sh`).
-- filly's core compiles with Emscripten (`filly/web`, `filly/tools/build_filly_web.sh`): the same
+  (`filly/web/tools/build_filament_web.sh`).
+- filly's core compiles with Emscripten (`filly/web`, `filly/web/tools/build_filly_web.sh`): the same
   C++ as the desktop module, with filly's precompiled material archive and output passes, for
   GLSL ES 3.00. The module is single-threaded, so pages need no cross-origin isolation.
 

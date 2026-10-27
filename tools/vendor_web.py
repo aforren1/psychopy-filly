@@ -2,7 +2,7 @@
 
 Usage: python tools/vendor_web.py FILLY_WEB_BUILD
 
-FILLY_WEB_BUILD is the output folder of filly's tools/build_filly_web.sh: filly.js,
+FILLY_WEB_BUILD is the output folder of filly's web/tools/build_filly_web.sh: filly.js,
 filly-core.js, filly-core.wasm, and licenses/. The plugin ships these files, and the component
 copies them into each experiment folder, so experiments load them from their own origin. A
 same-origin copy also loads under cross-origin isolation (COOP and COEP headers), which a CDN
@@ -34,7 +34,7 @@ def main():
         data = (TARGET / name).read_bytes()
         record[name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     (TARGET / "VENDOR.json").write_text(json.dumps(
-        {"source": "filly tools/build_filly_web.sh", "files": record}, indent=1) + "\n", encoding="utf-8")
+        {"source": "filly web/tools/build_filly_web.sh", "files": record}, indent=1) + "\n", encoding="utf-8")
     print(json.dumps(record, indent=1))
 
 
