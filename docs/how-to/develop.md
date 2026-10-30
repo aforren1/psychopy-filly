@@ -131,5 +131,5 @@ To publish:
 1. The workflow installs filly from PyPI. If the plugin needs filly changes that are not
    released, publish filly first.
 2. For a final release, require a final filly in `pyproject.toml`, for example
-   `filly>=0.2.0,<0.3`.
+   `filly>=0.3.0,<0.4`.
 3. Set `version` in `pyproject.toml`, commit, and push a tag such as `v0.1.0`.

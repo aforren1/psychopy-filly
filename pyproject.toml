@@ -15,7 +15,7 @@ authors = [{ name = "Alex Forrence", email = "alex.forrence@gmail.com" }]
 # The standalone app registers the "psychopy" distribution, so the requirement is already met
 # there. 2024.2 is the first release with a Python 3.10 standalone install. CI tests 2024.2.4
 # and 2026.2.4 (.github/workflows/release.yml).
-dependencies = ["filly>=0.2,<0.3", "numpy", "psychopy>=2024.2"]
+dependencies = ["filly>=0.3,<0.4", "numpy", "psychopy>=2024.2"]
 
 [project.urls]
 Homepage = "https://github.com/aforren1/psychopy-filly"
