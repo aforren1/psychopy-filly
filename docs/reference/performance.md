@@ -65,7 +65,8 @@ Intel Iris Xe.
 
 ## Picking, online
 
-The browser gives the answer of a pick 2 or 3 frames after the render.
+The browser gives the answer of a pick 1 frame after the render with filly's Filament 1.79.0
+build (Chrome and Firefox, 2026-11-01), and 2 or 3 frames with the earlier 1.77.1 build.
 
 ## Online stimulus creation
 

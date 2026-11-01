@@ -152,9 +152,10 @@ after the click.
 Locally, `contains()` renders, waits for the GPU, and answers at once. The models of one
 clickable list share that render: the scene keeps the answer for the same pixel and image.
 
-Online, WebGL gives the answer only 2 or 3 frames after the render, so `contains()` cannot wait.
-It returns the latest answer for the same pixel whose image is at most 4 renders older than the
-shown one. Pointer tracking (`trackPointer`) makes such an answer available at the click.
+Online, WebGL gives the answer only a frame or more after the render, so `contains()` cannot
+wait. It returns the latest answer for the same pixel whose image the window has shown and is at
+most 4 renders older than the shown one. An answer can arrive before the flip that shows its
+image; `contains()` does not use it until that flip. Pointer tracking (`trackPointer`) makes such an answer available at the click.
 
 The first pick of a renderer makes some GPU drivers do one-time work. Locally, when the plugin
 knows that a scene picks (`SceneStim(picking=True)`), it does a hidden pick once per window when

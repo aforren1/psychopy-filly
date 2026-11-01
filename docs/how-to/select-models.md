@@ -83,7 +83,7 @@ list. For such code, turn on **Mouse picking**, or the first click is slow.
 
 ## Online
 
-The browser gives the answer of a pick only 2 or 3 frames after the render, but the Mouse
+The browser gives the answer of a pick only a frame or more after the render, but the Mouse
 component needs it in the frame of the click. Thus:
 
 - The scene picks the pointer position after each frame in which the pointer moved over the

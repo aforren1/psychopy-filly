@@ -451,7 +451,8 @@ const PENDING = Symbol("pending");
 
 /**
  * A pick that SceneStim.pick() started: what the window showed at a point. Poll ready() once
- * per frame; WebGL delivers the answer 2 or 3 frames after the render that takes the query.
+ * per frame; WebGL delivers the answer frames after the render that takes the query (1 frame with
+ * filly's Filament 1.79.0 build, 2 or 3 with 1.77.1).
  *
  * pos, units: the point as given. pixel: the render-target pixel from the lower-left corner, or
  * null for a point outside the image (an immediate miss). frame: filly's frame number
@@ -1152,6 +1153,13 @@ function defineSceneStim(visual, util)
 				// scene may show something else at the pixel.
 				if (!pick._shown || !samePixel(pick.pixel, pixel) || pick._shown.serial < this._shown.serial - STALE_RENDERS)
 				{
+					continue;
+				}
+				// Not on the screen yet: since Filament 1.79, an answer can arrive before the flip
+				// that shows its image. A click answers to an image that the window showed.
+				if (pick._shown.flipTime === null)
+				{
+					running = true;
 					continue;
 				}
 				if (pick.ready())

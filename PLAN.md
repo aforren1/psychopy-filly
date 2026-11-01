@@ -217,9 +217,9 @@ Decisions:
   of one clickable list share that render: the scene keeps the answer for the same pixel and
   image. `lastPick` keeps it for logging. Frames without a click inside the image do no picking
   work; each rendered frame registers one `win.timeOnFlip()` for `flipTime`.
-- Online, WebGL answers only 2 or 3 frames after the render, so `contains()` cannot wait. It
-  returns the answer of the latest pick at the same pixel whose image is at most 4 renders
-  older than the shown one, or false and starts a pick. To have an answer at the click,
+- Online, WebGL answers only a frame or more after the render, so `contains()` cannot wait. It
+  returns the answer of the latest pick at the same pixel whose image the window has shown and
+  is at most 4 renders older than the shown one, or false and starts a pick. To have an answer at the click,
   `trackPointer` picks the pointer position after each flip in which it moved or the image
   changed, with the frame's own render when there is one. The compile sets it when a Mouse
   component names the scene or one of its models. Touch taps and clicks less than 3 frames
