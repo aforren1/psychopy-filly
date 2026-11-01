@@ -4,14 +4,23 @@ This page explains what the components generate, how filly draws into PsychoPy a
 windows, and why picks and the model cache behave as they do. For the steps, see the how-to
 guides; for the API, see the [runtime reference](../reference/runtime.md).
 
-## Two paths, no pixel copies
+## Two paths
 
 - Locally, filly renders into an OpenGL texture that the PsychoPy window shares. PsychoPy draws
   the texture like an image stimulus.
 - Online, filly's WebAssembly build renders into a WebGL texture that PsychoJS owns, in
   PsychoJS's own WebGL2 context. PsychoJS draws the texture like an image stimulus.
 
-Neither path copies pixels through the CPU. PsychoPy and PsychoJS keep control of the frame.
+On Windows, on Linux, and online, no path copies pixels. PsychoPy and PsychoJS keep control of
+the frame.
+
+On macOS, filly cannot share the PsychoPy window's OpenGL context. PsychoPy windows have a legacy
+profile context, Filament needs a core profile, and macOS shares objects only between contexts
+of one profile. filly renders in its own context, and the first draw of each frame copies the
+frame into the window's texture. The copy goes through an IOSurface on the GPU, or through CPU
+memory if filly cannot create the IOSurface. It costs about 0.5 ms per frame at 512 x 512 and
+1 ms at 1920 x 1080 on an Apple M2. For the details, see filly's
+[PsychoPy on macOS](https://github.com/aforren1/filly/blob/main/docs/how-to/psychopy.md#use-psychopy-on-macos).
 
 ## Generated code
 
@@ -177,4 +186,6 @@ That is why the online default (256 MiB) is lower than the local default (1 GiB)
 
 The plugin needs PsychoPy 2024.2 or later, because 2024.2 is the first release whose standalone
 install ships Python 3.10, and filly needs Python 3.10 or later. The tests run with PsychoPy
-2024.2.4 (Python 3.10) and 2026.2.4 (Python 3.11).
+2024.2.4 (Python 3.10) and 2026.2.4 (Python 3.11), on Linux in CI and on Windows locally.
+psychopy-filly's tests have not run on macOS. filly's own PsychoPy tests pass on macOS with
+PsychoPy 2026.1.3, 2026.2.5, and the 2027.1 development branch.

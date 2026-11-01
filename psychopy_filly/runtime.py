@@ -39,8 +39,8 @@ _atexit_registered = False
 
 
 def _check_environment(win):
-    if sys.platform not in ("win32", "linux"):
-        raise RuntimeError(f"psychopy-filly supports Windows and Linux only, not {sys.platform}")
+    if sys.platform not in ("win32", "linux", "darwin"):
+        raise RuntimeError(f"psychopy-filly supports Windows, Linux, and macOS only, not {sys.platform}")
     if win.winType != "pyglet":
         raise RuntimeError(
             f"psychopy-filly requires the pyglet window backend, but this window uses "

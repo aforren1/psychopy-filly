@@ -14,7 +14,9 @@ experiments (PsychoPy) and in online experiments (PsychoJS).
 
 ## Requirements
 
-- Windows or Linux. filly does not support macOS.
+- Windows, Linux, or macOS on Apple silicon. On macOS, filly copies each frame into the
+  PsychoPy window, which costs about 1 ms per frame. See
+  [How the plugin works](docs/explanation/how-it-works.md#two-paths).
 - PsychoPy 2024.2 or later. Tested with PsychoPy 2024.2.4 and 2026.2.4.
 - The pyglet window backend and an "average" blend mode (the defaults).
 - Online: a browser with WebGL2.

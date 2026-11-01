@@ -11,14 +11,13 @@ not yet run on Pavlovia: see [Phases](#phases). Facts marked "(phase 0)" were ch
   lights, and pose, and make parameters change per trial or per frame, as with other Builder
   components.
 - Local experiments render with filly into a shared OpenGL texture that PsychoPy draws. There is
-  no readback, and PsychoPy keeps control of the flip.
+  no readback, and PsychoPy keeps control of the flip. On macOS (filly 0.4 and later), filly
+  copies each frame into the window's texture instead; see docs/explanation/how-it-works.md.
 - Online experiments (PsychoJS on Pavlovia) use filly's WebAssembly build. See
   [Online experiments](#online-experiments).
 
 ## Out of scope
 
-- macOS. filly supports only Windows and Linux. The component must fail with a clear message on
-  macOS, not crash.
 - A general 3D scene editor in Builder. Builder parameters describe one stimulus at a time; users
   who need complex scenes use a Code component and the filly API.
 - Coder support. Coder users call filly directly with `filly.integrations.psychopy`.
