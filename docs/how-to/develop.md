@@ -99,13 +99,24 @@ The test helper `compile_js()` in `tests/builder_helpers.py` avoids both.
 
 ## Update the web build
 
-`psychopy_filly/web` holds a copy of filly's web build. To update it:
+`psychopy_filly/web` holds a copy of filly's web build. Use the web build of the filly release
+that the plugin requires, so that experiments online and offline use the same filly. To update
+it, run:
 
-1. In filly, build the Filament WebAssembly SDK once, then filly's module, on Linux or WSL:
-   `web/tools/build_filament_web.sh`, then `web/tools/build_filly_web.sh`. See filly's
-   [build guide](https://github.com/aforren1/filly/blob/main/docs/how-to/build.md#build-for-the-web).
-2. In psychopy-filly, run `python tools/vendor_web.py ../filly/build/web`. It copies the files
-   and writes their sizes and SHA-256 hashes to `psychopy_filly/web/VENDOR.json`.
+```sh
+python tools/vendor_web.py
+```
+
+The script downloads `filly-web-<version>.zip` from the GitHub release of the installed filly
+package, and checks the file against the SHA-256 hash that GitHub reports for it. To use another
+release, give its version, for example `python tools/vendor_web.py 0.4.1`. The script copies
+the files and writes the source and their sizes and SHA-256 hashes to
+`psychopy_filly/web/VENDOR.json`.
+
+To test changes to filly's web build before a release, give the folder of a local build
+instead, for example `python tools/vendor_web.py ../filly/build/web`. See filly's
+[build guide](https://github.com/aforren1/filly/blob/main/docs/how-to/build.md#build-for-the-web).
+Do not release the plugin with a local build.
 
 Do not edit the copied files by hand. `psychopy_filly/web/filly-psychojs.js` is this plugin's
 own code, not part of the copy.
