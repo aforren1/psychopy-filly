@@ -12,7 +12,7 @@ an order of magnitude, and measure your own experiment on the computer that runs
 | Browsers | Chrome, Edge, and Firefox. The Intel GPU, through ANGLE on Direct3D 11 |
 
 filly's own measurements on this laptop, with driver versions and the method, are in filly's
-[performance reference](https://github.com/aforren1/filly/blob/main/docs/reference/performance.md).
+[performance log](https://github.com/aforren1/filly/blob/main/docs/archive/performance-log.md).
 
 ## Model changes
 
